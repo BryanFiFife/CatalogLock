@@ -1,0 +1,19 @@
+{
+  "specVersion": "0.9",
+  "host": {
+    "displayName": "Example Agent Services",
+    "trustManifest": { "identity": "https://example.com", "identityType": "https" }
+  },
+  "entries": [
+    {
+      "identifier": "urn:air:example.com:agent:invoice-helper",
+      "displayName": "Invoice Helper",
+      "type": "application/a2a-agent-card+json",
+      "url": "https://agents.example.com/invoice/agent-card.json",
+      "description": "Reconciles invoice data",
+      "capabilities": ["invoice-reconciliation"],
+      "representativeQueries": ["reconcile these invoices"],
+      "trustManifest": { "identity": "https://agents.example.com", "identityType": "https" }
+    }
+  ]
+}

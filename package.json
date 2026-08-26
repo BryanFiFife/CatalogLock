@@ -1,0 +1,61 @@
+{
+  "name": "cataloglock",
+  "version": "0.1.0",
+  "description": "A deterministic security gate and lockfile for Agentic Resource Discovery (ARD) catalogs.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "BryanFiFife",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BryanFiFife/CatalogLock.git"
+  },
+  "homepage": "https://github.com/BryanFiFife/CatalogLock#readme",
+  "bugs": {
+    "url": "https://github.com/BryanFiFife/CatalogLock/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "cataloglock": "dist/cli.cjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "action.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true});require('fs').rmSync('.test-dist',{recursive:true,force:true})\"",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc && node scripts/make-wrappers.mjs",
+    "test": "tsc -p tsconfig.test.json && node --test .test-dist/tests/*.test.js",
+    "coverage": "tsc -p tsconfig.test.json && node --experimental-test-coverage --test .test-dist/tests/*.test.js",
+    "check": "npm run typecheck && npm test && npm run build",
+    "prepack": "npm run check"
+  },
+  "keywords": [
+    "ard",
+    "agentic-resource-discovery",
+    "ai-catalog",
+    "ai-agents",
+    "mcp",
+    "a2a",
+    "supply-chain-security",
+    "ssrf",
+    "lockfile",
+    "sarif",
+    "github-action",
+    "ai-security"
+  ],
+  "devDependencies": {
+    "@types/node": "24.3.1",
+    "typescript": "5.9.2"
+  }
+}

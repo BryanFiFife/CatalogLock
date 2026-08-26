@@ -1,0 +1,1 @@
+{"version":3,"file":"lockfile.d.ts","sourceRoot":"","sources":["../src/lockfile.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,eAAe,EAA8B,MAAM,EAAE,aAAa,EAAE,MAAM,YAAY,CAAC;AAErG,eAAO,MAAM,OAAO,UAAU,CAAC;AAoB/B,wBAAgB,cAAc,CAAC,MAAM,EAAE,aAAa,EAAE,MAAM,EAAE,MAAM,GAAG,eAAe,CAuBrF;AAED,wBAAgB,iBAAiB,CAAC,IAAI,EAAE,eAAe,GAAG,MAAM,CAAsC"}

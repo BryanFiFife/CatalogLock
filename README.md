@@ -195,7 +195,7 @@ Exit codes: `0` clean, `1` tool/runtime failure, `2` policy finding threshold re
 ## Roadmap
 
 - cryptographic verification for supported JWS / DID Web trust manifests
-- redirect support with per-hop pinned revalidation
+- redirect-chain policy controls and audit telemetry
 - optional public-suffix-aware organization-boundary policy
 - signed lockfiles and transparency-log anchoring
 - registry ingestion mode for fleet-scale scanning

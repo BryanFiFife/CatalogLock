@@ -1,0 +1,39 @@
+name: CatalogLock
+description: Security-gate Agentic Resource Discovery catalogs and emit a deterministic lockfile, SARIF and HTML report.
+author: BryanFiFife
+branding:
+  icon: lock
+  color: purple
+inputs:
+  target:
+    description: Domain or ARD ai-catalog URL to scan
+    required: true
+  policy:
+    description: Optional CatalogLock policy JSON path
+    required: false
+  fail-on:
+    description: info, warning, error or critical
+    required: false
+    default: error
+  lockfile:
+    description: Output lockfile path
+    required: false
+    default: cataloglock.lock.json
+  sarif:
+    description: Output SARIF path
+    required: false
+    default: cataloglock.sarif
+  html:
+    description: Output HTML report path
+    required: false
+    default: cataloglock-report.html
+outputs:
+  highest-severity:
+    description: Highest finding severity
+  findings:
+    description: Finding count
+  catalogs:
+    description: Resolved catalog count
+runs:
+  using: node20
+  main: dist/action.cjs

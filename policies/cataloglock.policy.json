@@ -1,0 +1,14 @@
+{
+  "maxDepth": 4,
+  "maxCatalogs": 32,
+  "maxEntriesPerCatalog": 5000,
+  "maxResponseBytes": 2000000,
+  "timeoutMs": 8000,
+  "maxRedirects": 3,
+  "allowedPorts": [443],
+  "allowHttp": false,
+  "allowCompatibilityArdJson": true,
+  "requirePublisherMatch": true,
+  "requireHttpsEntries": true,
+  "failOn": "error"
+}
