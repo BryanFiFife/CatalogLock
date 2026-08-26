@@ -131,6 +131,8 @@ The HTML report is self-contained. SARIF 2.1.0 can be uploaded to code-scanning 
 
 ## GitHub Action
 
+Until a semver tag is published, pin the immutable release commit:
+
 ```yaml
 name: Catalog security
 on: [push, pull_request]
@@ -143,7 +145,7 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v4
-      - uses: BryanFiFife/CatalogLock@v0.1.0
+      - uses: BryanFiFife/CatalogLock@970212dfd7bba67a822c0058ccca8b43d1533fe4
         with:
           target: example.com
           fail-on: error
