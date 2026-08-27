@@ -177,10 +177,14 @@ jobs:
               body: JSON.stringify(body)
             });
             const response = await transport.handleRequest(request);
+            const responseBody = await response.text();
+            if (process.env.CATALOGLOCK_INTEROP_DEBUG === '1') {
+              console.log('MCP official SDK response', { method: body.method, requestId: body.id, status: response.status, contentType: response.headers.get('content-type'), body: responseBody });
+            }
             return {
               url,
               status: response.status,
-              body: await response.text(),
+              body: responseBody,
               contentType: response.headers.get('content-type') ?? undefined,
               headers: Object.fromEntries(response.headers.entries())
             };
@@ -207,7 +211,7 @@ jobs:
           await server.close();
           EOF
           cd /tmp/mcp-interop
-          node interop.mjs
+          CATALOGLOCK_INTEROP_DEBUG=1 node interop.mjs
 
   promote:
     name: Promote clean tree and publish v0.3.0
