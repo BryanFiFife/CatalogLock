@@ -5,7 +5,6 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/release-v0.3.0.yml"
-      - ".release/apply-v03-final.py"
   workflow_dispatch:
 
 permissions:
@@ -251,38 +250,88 @@ jobs:
           diff -u /tmp/dist-first.sha256 /tmp/dist-second.sha256
           rm -rf node_modules .test-dist .smoke coverage release .release
           node scripts/check-tree.mjs
-      - name: Replace main with clean release tree
+      - name: Promote tested content without changing workflows
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mkdir -p /tmp/current-workflows
+          cp -a .github/workflows/. /tmp/current-workflows/
           git rm -rf .
           cp -a /tmp/cataloglock-candidate/. .
+          rm -rf .github/workflows
+          mkdir -p .github/workflows
+          cp -a /tmp/current-workflows/. .github/workflows/
           test ! -e .release
           test ! -e node_modules
           test ! -e .test-dist
-          node scripts/check-tree.mjs
           git add -A
-          if git ls-files | grep -E '(^|/)(node_modules|\.test-dist|\.release|\.smoke|coverage|release)(/|$)|(^|/)\.env($|\.)|\.log$'; then
-            echo "forbidden release artifact is tracked" >&2
+          if git diff --cached --name-only | grep '^.github/workflows/'; then
+            echo "workflow files changed in Actions-controlled promotion" >&2
             exit 1
           fi
-          git commit -m "release: CatalogLock v0.3.0"
-          echo "RELEASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-      - name: Build release artifacts from exact commit
+          git commit -m "release: stage CatalogLock v0.3.0 content"
+          STAGING_SHA="$(git rev-parse HEAD)"
+          echo "STAGING_SHA=${STAGING_SHA}" >> "$GITHUB_ENV"
+          git push origin HEAD:main
+      - name: Wait for API-cleaned final main
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLEAN_SHA=""
+          for i in $(seq 1 120); do
+            git fetch origin main
+            candidate="$(git rev-parse origin/main)"
+            workflows="$(git ls-tree -r --name-only "${candidate}" | grep '^.github/workflows/' || true)"
+            releases="$(git ls-tree -r --name-only "${candidate}" | grep '^.release/' || true)"
+            if [ "${workflows}" = ".github/workflows/ci.yml" ] && [ -z "${releases}" ]; then
+              unexpected="$(git diff --name-only "${STAGING_SHA}" "${candidate}" | grep -v '^.github/workflows/' || true)"
+              if [ -n "${unexpected}" ]; then
+                echo "API cleanup changed non-workflow files:" >&2
+                echo "${unexpected}" >&2
+                exit 1
+              fi
+              CLEAN_SHA="${candidate}"
+              break
+            fi
+            sleep 5
+          done
+          if [ -z "${CLEAN_SHA}" ]; then
+            echo "final clean main was not observed" >&2
+            exit 1
+          fi
+          echo "RELEASE_SHA=${CLEAN_SHA}" >> "$GITHUB_ENV"
+          git checkout --detach "${CLEAN_SHA}"
+          test "$(git ls-tree -r --name-only HEAD | grep '^.github/workflows/' | tr '\n' ' ')" = ".github/workflows/ci.yml "
+          ! git ls-tree -r --name-only HEAD | grep -q '^.release/'
+          grep -q 'actions/checkout@v6' .github/workflows/ci.yml
+          grep -q 'npm run release:check' .github/workflows/ci.yml
+      - name: Final verify exact clean release commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          npm run release:check
+          npm audit --audit-level=high
+          find dist -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/dist-first.sha256
+          npm run build
+          find dist -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/dist-second.sha256
+          diff -u /tmp/dist-first.sha256 /tmp/dist-second.sha256
+          rm -rf node_modules .test-dist
+      - name: Build release artifacts from exact clean commit
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/release-assets
-          git archive --format=zip --prefix=CatalogLock-v0.3.0/ HEAD > /tmp/release-assets/CatalogLock-v0.3.0.zip
+          git archive --format=zip --prefix=CatalogLock-v0.3.0/ "${RELEASE_SHA}" > /tmp/release-assets/CatalogLock-v0.3.0.zip
           npm pack --ignore-scripts --pack-destination /tmp/release-assets >/tmp/npm-pack-name.txt
           test -f /tmp/release-assets/cataloglock-0.3.0.tgz
           (cd /tmp/release-assets && sha256sum CatalogLock-v0.3.0.zip cataloglock-0.3.0.tgz > CatalogLock-v0.3.0.sha256)
-          unzip -l /tmp/release-assets/CatalogLock-v0.3.0.zip | grep -E '(node_modules|\.test-dist|\.release|\.smoke|coverage/|release/)' && exit 1 || true
+          unzip -l /tmp/release-assets/CatalogLock-v0.3.0.zip | grep -E '(node_modules|\.test-dist|\.release|\.smoke|coverage/|release-v0\.3|recover-v0\.3|export-v02)' && exit 1 || true
           tar -tzf /tmp/release-assets/cataloglock-0.3.0.tgz | grep -E '(node_modules|\.test-dist|\.release|\.smoke|coverage/|tests/|src/)' && exit 1 || true
           cat /tmp/release-assets/CatalogLock-v0.3.0.sha256
-      - name: Push clean main and immutable tag
+      - name: Push immutable tag
         shell: bash
         run: |
           set -euo pipefail
@@ -290,8 +339,7 @@ jobs:
             echo "v0.3.0 tag already exists; refusing to overwrite" >&2
             exit 1
           fi
-          git push origin HEAD:main
-          git tag -a v0.3.0 -m "CatalogLock v0.3.0"
+          git tag -a v0.3.0 "${RELEASE_SHA}" -m "CatalogLock v0.3.0"
           git push origin refs/tags/v0.3.0
       - name: Publish GitHub release
         env:
