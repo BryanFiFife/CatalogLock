@@ -27,7 +27,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat .release/v0.2.0-final.part*.b64 | base64 -d > /tmp/cataloglock-v0.2.0.tar.gz
+          cat .release/v0.2.0-final.part00.b64 .release/v0.2.0-final.part01.b64 .release/v0.2.0-final.part02.b64 .release/v0.2.0-final.part03.00.b64 .release/v0.2.0-final.part03.01.b64 .release/v0.2.0-final.part03.02.b64 .release/v0.2.0-final.part03.03.b64 .release/v0.2.0-final.part03.04.b64 .release/v0.2.0-final.part04.b64 | base64 -d > /tmp/cataloglock-v0.2.0.tar.gz
           echo "$PAYLOAD_SHA256  /tmp/cataloglock-v0.2.0.tar.gz" | sha256sum -c -
           mkdir -p /tmp/candidate
           tar -xzf /tmp/cataloglock-v0.2.0.tar.gz -C /tmp/candidate
@@ -79,7 +79,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat .release/v0.2.0-final.part*.b64 | base64 -d > /tmp/cataloglock-v0.2.0.tar.gz
+          cat .release/v0.2.0-final.part00.b64 .release/v0.2.0-final.part01.b64 .release/v0.2.0-final.part02.b64 .release/v0.2.0-final.part03.00.b64 .release/v0.2.0-final.part03.01.b64 .release/v0.2.0-final.part03.02.b64 .release/v0.2.0-final.part03.03.b64 .release/v0.2.0-final.part03.04.b64 .release/v0.2.0-final.part04.b64 | base64 -d > /tmp/cataloglock-v0.2.0.tar.gz
           echo "$PAYLOAD_SHA256  /tmp/cataloglock-v0.2.0.tar.gz" | sha256sum -c -
           mkdir -p /tmp/candidate
           tar -xzf /tmp/cataloglock-v0.2.0.tar.gz -C /tmp/candidate
