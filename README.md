@@ -5,7 +5,7 @@
 ### **Pin what an agent can discover, trust, and consume before it connects.**
 
 [![CI](https://github.com/BryanFiFife/CatalogLock/actions/workflows/ci.yml/badge.svg)](https://github.com/BryanFiFife/CatalogLock/actions/workflows/ci.yml)
-[![Conformance](https://github.com/BryanFiFife/CatalogLock/actions/workflows/conformance.yml/badge.svg)](https://github.com/BryanFiFife/CatalogLock/actions/workflows/conformance.yml)
+[![Conformance](https://img.shields.io/badge/conformance-v0.3.0%20ARD%20%2B%20MCP%20passed-00b894)](https://github.com/BryanFiFife/CatalogLock/releases/tag/v0.3.0)
 [![Release](https://img.shields.io/github/v/release/BryanFiFife/CatalogLock?display_name=tag&sort=semver)](https://github.com/BryanFiFife/CatalogLock/releases/latest)
 [![Node](https://img.shields.io/badge/node-20%20%7C%2022%20%7C%2024-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-7c3aed)](LICENSE)
