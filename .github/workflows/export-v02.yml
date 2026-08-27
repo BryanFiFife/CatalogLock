@@ -1,0 +1,29 @@
+name: Export v0.2 clean source
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/export-v02.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v0.2.0
+          fetch-depth: 1
+      - name: Archive clean tag source
+        run: |
+          set -euo pipefail
+          git archive --format=tar.gz --prefix=CatalogLock-v0.2.0/ HEAD > CatalogLock-v0.2.0-source.tar.gz
+          sha256sum CatalogLock-v0.2.0-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cataloglock-v0.2-clean-source
+          path: CatalogLock-v0.2.0-source.tar.gz
+          retention-days: 1
