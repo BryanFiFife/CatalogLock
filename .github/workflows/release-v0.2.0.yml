@@ -35,8 +35,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-          cache: npm
-          cache-dependency-path: /tmp/candidate/package-lock.json
 
       - name: Clean install and full gate
         working-directory: /tmp/candidate
@@ -87,7 +85,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
 
       - name: Replace staging tree with verified source
         shell: bash
