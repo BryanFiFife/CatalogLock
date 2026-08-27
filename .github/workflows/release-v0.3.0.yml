@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/release-v0.3.0.yml"
+      - ".release/apply-v03-final.py"
   workflow_dispatch:
 
 permissions:
@@ -16,7 +17,9 @@ concurrency:
 
 env:
   CANDIDATE_SHA256: a5b3de9b6ece09b34cc47173e1c5cb54cd701d830beab9355d937b60ec816412
+  FINAL_SOURCE_SHA256: a063f54ece339763db67788a0612bdc9f04fa6f4e23771e6bdb6a6c9d63dd18b
   ARD_COMMIT: aa3e598bb7752a9175897823234311216acfa864
+  MCP_SDK_COMMIT: 7b781ed4e25355a25d15974f3c76de81299694ed
 
 jobs:
   matrix:
@@ -28,17 +31,21 @@ jobs:
         node: [20, 22, 24]
     steps:
       - uses: actions/checkout@v6
-      - name: Reconstruct sealed source
+      - name: Reconstruct and seal final source
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf /tmp/cataloglock-candidate
           mkdir -p /tmp/cataloglock-candidate
           cat .release/v0.3-src{00..09}.b64 | tr -d '[:space:]' | base64 -d > /tmp/candidate.tar.gz
           echo "${CANDIDATE_SHA256}  /tmp/candidate.tar.gz" | sha256sum -c -
           tar -xzf /tmp/candidate.tar.gz -C /tmp/cataloglock-candidate
-          test "$(find /tmp/cataloglock-candidate -type f | wc -l)" -eq 48
-          ! find /tmp/cataloglock-candidate -path '*/node_modules/*' -o -path '*/.test-dist/*' -o -path '*/.release/*' | grep -q .
-          sed -i 's/using: node20/using: node24/' /tmp/cataloglock-candidate/action.yml
+          python .release/apply-v03-final.py /tmp/cataloglock-candidate
+          cd /tmp/cataloglock-candidate
+          find . -type f ! -path './dist/*' ! -path './.git/*' ! -path './.release/*' ! -path './node_modules/*' ! -path './.test-dist/*' ! -path './release/*' ! -path './coverage/*' -printf '%P\n' | LC_ALL=C sort > /tmp/final-source-files.txt
+          test "$(wc -l < /tmp/final-source-files.txt)" -eq 48
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner --mode='u+rwX,go+rX,go-w' -czf /tmp/final-source.tar.gz -T /tmp/final-source-files.txt
+          echo "${FINAL_SOURCE_SHA256}  /tmp/final-source.tar.gz" | sha256sum -c -
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
@@ -65,14 +72,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Reconstruct sealed source
+      - name: Reconstruct and seal final source
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf /tmp/cataloglock-candidate
           mkdir -p /tmp/cataloglock-candidate
           cat .release/v0.3-src{00..09}.b64 | tr -d '[:space:]' | base64 -d > /tmp/candidate.tar.gz
           echo "${CANDIDATE_SHA256}  /tmp/candidate.tar.gz" | sha256sum -c -
           tar -xzf /tmp/candidate.tar.gz -C /tmp/cataloglock-candidate
+          python .release/apply-v03-final.py /tmp/cataloglock-candidate
+          cd /tmp/cataloglock-candidate
+          find . -type f ! -path './dist/*' ! -path './.git/*' ! -path './.release/*' ! -path './node_modules/*' ! -path './.test-dist/*' ! -path './release/*' ! -path './coverage/*' -printf '%P\n' | LC_ALL=C sort > /tmp/final-source-files.txt
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner --mode='u+rwX,go+rX,go-w' -czf /tmp/final-source.tar.gz -T /tmp/final-source-files.txt
+          echo "${FINAL_SOURCE_SHA256}  /tmp/final-source.tar.gz" | sha256sum -c -
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -90,22 +103,26 @@ jobs:
           set -euo pipefail
           python /tmp/ard/conformance/bin/conformance-test manifest /tmp/cataloglock-candidate/examples/good-ard.json
           python /tmp/ard/conformance/bin/conformance-test manifest /tmp/cataloglock-candidate/examples/nested-ard.json
-          echo "Official ARD v0.91 conformance PASS. Security-policy rejection of structurally valid poisoned manifests is covered by CatalogLock's adversarial test suite."
 
   mcp:
-    name: Official MCP SDK v2.0.0 interoperability
+    name: Official MCP 2026 interoperability
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - name: Reconstruct sealed source
+      - name: Reconstruct and seal final source
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf /tmp/cataloglock-candidate
           mkdir -p /tmp/cataloglock-candidate
           cat .release/v0.3-src{00..09}.b64 | tr -d '[:space:]' | base64 -d > /tmp/candidate.tar.gz
           echo "${CANDIDATE_SHA256}  /tmp/candidate.tar.gz" | sha256sum -c -
           tar -xzf /tmp/candidate.tar.gz -C /tmp/cataloglock-candidate
-          sed -i 's/using: node20/using: node24/' /tmp/cataloglock-candidate/action.yml
+          python .release/apply-v03-final.py /tmp/cataloglock-candidate
+          cd /tmp/cataloglock-candidate
+          find . -type f ! -path './dist/*' ! -path './.git/*' ! -path './.release/*' ! -path './node_modules/*' ! -path './.test-dist/*' ! -path './release/*' ! -path './coverage/*' -printf '%P\n' | LC_ALL=C sort > /tmp/final-source-files.txt
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner --mode='u+rwX,go+rX,go-w' -czf /tmp/final-source.tar.gz -T /tmp/final-source-files.txt
+          echo "${FINAL_SOURCE_SHA256}  /tmp/final-source.tar.gz" | sha256sum -c -
       - uses: actions/setup-node@v6
         with:
           node-version: 24
@@ -116,102 +133,88 @@ jobs:
           set -euo pipefail
           npm ci --ignore-scripts
           npm run build
-      - name: Install official stable MCP SDK
+      - name: Verify npm-published SDK 2.0.0 compatibility boundary
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p /tmp/mcp-interop
-          cd /tmp/mcp-interop
+          rm -rf /tmp/mcp-stable
+          mkdir -p /tmp/mcp-stable
+          cd /tmp/mcp-stable
           npm init -y >/dev/null
           npm install --ignore-scripts @modelcontextprotocol/server@2.0.0 zod@4
-          node -e "const p=require('./node_modules/@modelcontextprotocol/server/package.json'); if(p.version!=='2.0.0') process.exit(1); console.log('official MCP server SDK',p.version)"
-      - name: Exercise CatalogLock against official SDK transport
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/mcp-interop/interop.mjs <<'EOF'
+          node -e "const p=require('./node_modules/@modelcontextprotocol/server/package.json'); if(p.version!=='2.0.0') process.exit(1)"
+          cat > boundary.mjs <<'EOF'
           import { McpServer, WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server';
           import * as z from 'zod/v4';
           import { inspectMcpSurfaces, mergePolicy } from '/tmp/cataloglock-candidate/dist/index.js';
 
-          const server = new McpServer({ name: 'cataloglock-interop', version: '1.0.0' });
-          server.registerTool('echo', {
-            title: 'Echo',
-            description: 'Echo text without side effects',
-            inputSchema: z.object({ text: z.string() })
-          }, async ({ text }) => ({ content: [{ type: 'text', text }] }));
-
+          const server = new McpServer({ name: 'cataloglock-stable-boundary', version: '1.0.0' });
+          server.registerTool('echo', { inputSchema: z.object({ text: z.string() }) }, async ({ text }) => ({ content: [{ type: 'text', text }] }));
           const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined });
           await server.connect(transport);
 
-          const identifier = 'urn:air:interop.invalid:server:test';
-          const endpoint = 'https://interop.invalid/mcp';
-          const result = {
-            root: 'https://interop.invalid/.well-known/ard.json',
-            rootSourceKind: 'explicit',
-            ardContextSha256: 'interop',
-            catalogs: [{
-              url: 'https://interop.invalid/.well-known/ard.json',
-              sourceHost: 'interop.invalid',
-              sha256: 'interop',
-              depth: 0,
-              catalog: { entries: [{
-                identifier,
-                displayName: 'Official SDK interoperability server',
-                type: 'application/mcp-server-card+json',
-                data: { remotes: [{ id: 'primary', type: 'streamable-http', url: endpoint }] }
-              }] }
-            }],
-            findings: [],
-            trust: []
+          const endpoint='https://interop.invalid/mcp';
+          const result={root:'https://interop.invalid/.well-known/ard.json',rootSourceKind:'explicit',ardContextSha256:'interop',catalogs:[{url:'https://interop.invalid/.well-known/ard.json',sourceHost:'interop.invalid',sha256:'interop',depth:0,catalog:{entries:[{identifier:'urn:air:interop.invalid:server:test',displayName:'Stable SDK boundary',type:'application/mcp-server-card+json',data:{remotes:[{id:'primary',type:'streamable-http',url:endpoint}]}}]}}],findings:[],trust:[]};
+          const requester=async(url,body,policy,headers)=>{
+            const response=await transport.handleRequest(new Request(url,{method:'POST',headers:{...headers,'Content-Type':'application/json','Accept':'application/json, text/event-stream'},body:JSON.stringify(body)}));
+            return {url,status:response.status,body:await response.text(),contentType:response.headers.get('content-type')??undefined,headers:Object.fromEntries(response.headers.entries())};
           };
-
-          const requester = async (url, body, policy, headers) => {
-            const request = new Request(url, {
-              method: 'POST',
-              headers: {
-                ...headers,
-                'Content-Type': 'application/json',
-                'Accept': 'application/json, text/event-stream'
-              },
-              body: JSON.stringify(body)
-            });
-            const response = await transport.handleRequest(request);
-            const responseBody = await response.text();
-            if (process.env.CATALOGLOCK_INTEROP_DEBUG === '1') {
-              console.log('MCP official SDK response', { method: body.method, requestId: body.id, status: response.status, contentType: response.headers.get('content-type'), body: responseBody });
-            }
-            return {
-              url,
-              status: response.status,
-              body: responseBody,
-              contentType: response.headers.get('content-type') ?? undefined,
-              headers: Object.fromEntries(response.headers.entries())
-            };
-          };
-
-          const policy = mergePolicy({
-            requireMcpInspection: true,
-            inspectMcpDiscover: true,
-            inspectMcpPrimitives: true
-          });
-          const out = await inspectMcpSurfaces(result, policy, { requester });
-          const bad = out.findings.filter(f => f.severity === 'error' || f.severity === 'critical');
-          if (bad.length) throw new Error(JSON.stringify(bad, null, 2));
-          if (out.surfaces.length !== 1) throw new Error('expected exactly one MCP surface');
-          const surface = out.surfaces[0];
-          if (!surface.discover) throw new Error('server/discover was not locked');
-          if (!surface.tools?.items?.some(x => x.key === 'echo')) throw new Error('official SDK echo tool was not locked');
-          if (!surface.discover.supportedVersions.includes('2026-07-28')) throw new Error('official SDK did not negotiate MCP 2026-07-28');
-          console.log('MCP SDK interoperability PASS', {
-            surfaceId: surface.surfaceId,
-            protocolVersion: surface.protocolVersion,
-            tools: surface.tools.items.map(x => x.key)
-          });
+          const out=await inspectMcpSurfaces(result,mergePolicy({requireMcpInspection:true,inspectMcpPrimitives:false}),{requester});
+          const messages=out.findings.map(f=>f.message);
+          if(!messages.some(m=>m.includes('Unsupported protocol version: 2026-07-28'))) throw new Error(JSON.stringify(out.findings,null,2));
+          if(messages.some(m=>m.includes('matching request id'))) throw new Error('protocol rejection regressed to response-id mismatch');
+          console.log('published SDK 2.0.0 boundary PASS');
           await server.close();
           EOF
-          cd /tmp/mcp-interop
-          CATALOGLOCK_INTEROP_DEBUG=1 node interop.mjs
+          node boundary.mjs
+      - name: Build pinned current official MCP SDK source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/mcp-sdk
+          git clone --filter=blob:none https://github.com/modelcontextprotocol/typescript-sdk.git /tmp/mcp-sdk
+          git -C /tmp/mcp-sdk checkout "${MCP_SDK_COMMIT}"
+          test "$(git -C /tmp/mcp-sdk rev-parse HEAD)" = "${MCP_SDK_COMMIT}"
+          cd /tmp/mcp-sdk
+          corepack enable
+          corepack prepare pnpm@10.26.1 --activate
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm --filter @modelcontextprotocol/server... build
+      - name: Exercise CatalogLock against pinned official MCP 2026 server
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/mcp-sdk/packages/server/cataloglock-interop.mjs <<'EOF'
+          import { McpServer, createMcpHandler } from './dist/index.mjs';
+          import * as z from 'zod/v4';
+          import { inspectMcpSurfaces, mergePolicy } from '/tmp/cataloglock-candidate/dist/index.js';
+
+          const handler=createMcpHandler(async()=>{
+            const server=new McpServer({name:'cataloglock-interop',version:'1.0.0'});
+            server.registerTool('echo',{title:'Echo',description:'Echo text without side effects',inputSchema:z.object({text:z.string()})},async({text})=>({content:[{type:'text',text}]}));
+            return server;
+          },{legacy:'reject',responseMode:'json'});
+
+          const identifier='urn:air:interop.invalid:server:test';
+          const endpoint='https://interop.invalid/mcp';
+          const result={root:'https://interop.invalid/.well-known/ard.json',rootSourceKind:'explicit',ardContextSha256:'interop',catalogs:[{url:'https://interop.invalid/.well-known/ard.json',sourceHost:'interop.invalid',sha256:'interop',depth:0,catalog:{entries:[{identifier,displayName:'Pinned official SDK interoperability server',type:'application/mcp-server-card+json',data:{remotes:[{id:'primary',type:'streamable-http',url:endpoint}]}}]}}],findings:[],trust:[]};
+          const requester=async(url,body,policy,headers)=>{
+            const response=await handler(new Request(url,{method:'POST',headers:{...headers,'Content-Type':'application/json','Accept':'application/json, text/event-stream'},body:JSON.stringify(body)}));
+            return {url,status:response.status,body:await response.text(),contentType:response.headers.get('content-type')??undefined,headers:Object.fromEntries(response.headers.entries())};
+          };
+          const out=await inspectMcpSurfaces(result,mergePolicy({requireMcpInspection:true,inspectMcpDiscover:true,inspectMcpPrimitives:true}),{requester});
+          const bad=out.findings.filter(f=>f.severity==='error'||f.severity==='critical');
+          if(bad.length) throw new Error(JSON.stringify(bad,null,2));
+          if(out.surfaces.length!==1) throw new Error('expected exactly one MCP surface');
+          const surface=out.surfaces[0];
+          if(!surface.discover) throw new Error('server/discover was not locked');
+          if(!surface.tools?.items?.some(x=>x.key==='echo')) throw new Error('official SDK echo tool was not locked');
+          if(!surface.discover.supportedVersions.includes('2026-07-28')) throw new Error('official SDK did not advertise MCP 2026-07-28');
+          console.log('pinned official MCP 2026 interoperability PASS',{surfaceId:surface.surfaceId,protocolVersion:surface.protocolVersion,tools:surface.tools.items.map(x=>x.key)});
+          await handler.close?.();
+          EOF
+          cd /tmp/mcp-sdk/packages/server
+          node cataloglock-interop.mjs
 
   promote:
     name: Promote clean tree and publish v0.3.0
@@ -225,7 +228,7 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
-      - name: Reconstruct, patch runtime metadata and final-gate exact tree
+      - name: Reconstruct and final-gate exact tree
         shell: bash
         run: |
           set -euo pipefail
@@ -234,8 +237,11 @@ jobs:
           cat .release/v0.3-src{00..09}.b64 | tr -d '[:space:]' | base64 -d > /tmp/candidate.tar.gz
           echo "${CANDIDATE_SHA256}  /tmp/candidate.tar.gz" | sha256sum -c -
           tar -xzf /tmp/candidate.tar.gz -C /tmp/cataloglock-candidate
-          sed -i 's/using: node20/using: node24/' /tmp/cataloglock-candidate/action.yml
+          python .release/apply-v03-final.py /tmp/cataloglock-candidate
           cd /tmp/cataloglock-candidate
+          find . -type f ! -path './dist/*' ! -path './.git/*' ! -path './.release/*' ! -path './node_modules/*' ! -path './.test-dist/*' ! -path './release/*' ! -path './coverage/*' -printf '%P\n' | LC_ALL=C sort > /tmp/final-source-files.txt
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner --mode='u+rwX,go+rX,go-w' -czf /tmp/final-source.tar.gz -T /tmp/final-source-files.txt
+          echo "${FINAL_SOURCE_SHA256}  /tmp/final-source.tar.gz" | sha256sum -c -
           npm ci --ignore-scripts
           npm run release:check
           npm audit --audit-level=high
