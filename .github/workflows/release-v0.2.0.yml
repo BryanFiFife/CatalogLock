@@ -1,0 +1,173 @@
+name: Release v0.2.0
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-v0.2.0.yml"
+
+permissions:
+  contents: write
+
+env:
+  PAYLOAD_SHA256: 49ab23c35cb0150d872540f3969ca0a8d47ff84f0594609a78702b88a20cc47b
+
+jobs:
+  verify:
+    name: Verify Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct verified candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .release/v0.2.0-final.part*.b64 | base64 -d > /tmp/cataloglock-v0.2.0.tar.gz
+          echo "$PAYLOAD_SHA256  /tmp/cataloglock-v0.2.0.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/candidate
+          tar -xzf /tmp/cataloglock-v0.2.0.tar.gz -C /tmp/candidate
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: /tmp/candidate/package-lock.json
+
+      - name: Clean install and full gate
+        working-directory: /tmp/candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run check
+          test "$(node dist/cli.cjs version)" = "0.2.0"
+          node -e "const p=require('./package.json'); if (p.dependencies && Object.keys(p.dependencies).length) { console.error('runtime dependencies are not zero'); process.exit(1); }"
+          npm pack --dry-run
+          npm audit --audit-level=high
+
+  publish:
+    name: Publish verified release
+    needs: verify
+    runs-on: ubuntu-latest
+    if: ${{ success() }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Refuse duplicate release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view v0.2.0 >/dev/null 2>&1; then
+            echo "v0.2.0 already exists; refusing to overwrite it."
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin refs/tags/v0.2.0 >/dev/null 2>&1; then
+            echo "Tag v0.2.0 already exists; refusing to overwrite it."
+            exit 1
+          fi
+
+      - name: Reconstruct and verify candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .release/v0.2.0-final.part*.b64 | base64 -d > /tmp/cataloglock-v0.2.0.tar.gz
+          echo "$PAYLOAD_SHA256  /tmp/cataloglock-v0.2.0.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/candidate
+          tar -xzf /tmp/cataloglock-v0.2.0.tar.gz -C /tmp/candidate
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Replace staging tree with verified source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .github/workflows/release-v0.2.0.yml /tmp/release-v0.2.0.yml
+          git rm -rf .
+          cp -a /tmp/candidate/. .
+          cp /tmp/release-v0.2.0.yml .github/workflows/release-v0.2.0.yml
+          rm -rf .release node_modules .test-dist
+          git add -A
+
+      - name: Final build reproducibility gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run check
+          test "$(node dist/cli.cjs version)" = "0.2.0"
+          git diff --exit-code -- dist
+          npm audit --audit-level=high
+
+      - name: Commit verified v0.2.0
+        id: commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -A
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "feat: lock live MCP tool surfaces (v0.2.0)"
+          FINAL_SHA="$(git rev-parse HEAD)"
+          echo "sha=$FINAL_SHA" >> "$GITHUB_OUTPUT"
+          git push origin HEAD:main
+
+      - name: Build release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          npm pack --pack-destination release
+          zip -qr release/CatalogLock-v0.2.0.zip . \
+            -x ".git/*" "node_modules/*" ".test-dist/*" "release/*"
+          (
+            cd release
+            sha256sum CatalogLock-v0.2.0.zip cataloglock-0.2.0.tgz > CatalogLock-v0.2.0.sha256
+          )
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FINAL_SHA: ${{ steps.commit.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create v0.2.0 \
+            release/CatalogLock-v0.2.0.zip \
+            release/cataloglock-0.2.0.tgz \
+            release/CatalogLock-v0.2.0.sha256 \
+            --target "$FINAL_SHA" \
+            --title "CatalogLock v0.2.0 — Live MCP Tool-Surface Locking" \
+            --notes-file docs/releases/v0.2.0.md
+
+      - name: Verify published tag and artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FINAL_SHA: ${{ steps.commit.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_JSON="$(gh release view v0.2.0 --json tagName,isDraft,isPrerelease,targetCommitish,url)"
+          echo "$RELEASE_JSON"
+          test "$(echo "$RELEASE_JSON" | jq -r .tagName)" = "v0.2.0"
+          test "$(echo "$RELEASE_JSON" | jq -r .isDraft)" = "false"
+          test "$(echo "$RELEASE_JSON" | jq -r .isPrerelease)" = "false"
+          TAG_SHA="$(git rev-list -n 1 v0.2.0)"
+          test "$TAG_SHA" = "$FINAL_SHA"
+          mkdir -p /tmp/release-verify
+          gh release download v0.2.0 --dir /tmp/release-verify
+          (
+            cd /tmp/release-verify
+            sha256sum -c CatalogLock-v0.2.0.sha256
+          )
