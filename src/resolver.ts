@@ -44,7 +44,7 @@ export async function resolveCatalogs(target: string, options: ResolveOptions = 
       if (result.status !== 404 || i === candidates.length - 1) findings.push({ ruleId: 'fetch/http-status', severity: 'error', message: `Catalog returned HTTP ${result.status}`, location: candidate });
     } catch (err) {
       findings.push({ ruleId: 'fetch/root', severity: 'critical', message: err instanceof Error ? err.message : String(err), location: candidate });
-      if (i === 0) break; // security failure must not silently fall through to a second path.
+      if (i === 0) break;
     }
   }
   if (!rootUrl || !rootFetch) return { root: candidates[0]!, catalogs, findings, trust };
@@ -97,5 +97,10 @@ export async function resolveCatalogs(target: string, options: ResolveOptions = 
     }
   }
 
-  return { root: rootUrl, catalogs: catalogs.sort((a, b) => a.url.localeCompare(b.url)), findings: findings.sort((a,b) => `${a.severity}:${a.ruleId}:${a.location ?? ''}:${a.message}`.localeCompare(`${b.severity}:${b.ruleId}:${b.location ?? ''}:${b.message}`)), trust: trust.sort((a,b) => a.identifier.localeCompare(b.identifier) || a.sourceCatalog.localeCompare(b.sourceCatalog)) };
+  return {
+    root: rootUrl,
+    catalogs: catalogs.sort((a, b) => a.url.localeCompare(b.url)),
+    findings: findings.sort((a,b) => `${a.severity}:${a.ruleId}:${a.location ?? ''}:${a.message}`.localeCompare(`${b.severity}:${b.ruleId}:${b.location ?? ''}:${b.message}`)),
+    trust: trust.sort((a,b) => a.identifier.localeCompare(b.identifier) || a.sourceCatalog.localeCompare(b.sourceCatalog))
+  };
 }

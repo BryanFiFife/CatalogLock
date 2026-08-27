@@ -1,9 +1,11 @@
 # Security policy
 
-CatalogLock is a security-sensitive resolver. Please do not file exploitable SSRF, DNS-rebinding, parser-confusion, trust-bypass, or lockfile-integrity findings as public issues before a fix is available.
+CatalogLock is a security-sensitive resolver and MCP surface inspector. Please do not file exploitable SSRF, DNS-rebinding, parser-confusion, trust-bypass, tool-surface-bypass, or lockfile-integrity findings as public issues before a fix is available.
 
 Report vulnerabilities privately through GitHub Security Advisories for the repository when available. Include a minimal reproduction, affected version, impact, and any proposed mitigation.
 
 ## Security boundaries
 
-CatalogLock treats discovery metadata as untrusted. It does not treat an ARD trust-manifest attestation string as proof that an audit or certification is genuine. Optional signatures are recorded but are not considered cryptographically verified unless a future verifier explicitly validates them against a supported identity method.
+CatalogLock treats discovery metadata, MCP Server Cards and runtime tool listings as untrusted. It does not treat an ARD trust-manifest attestation string as proof that an audit or certification is genuine. Optional signatures are recorded but are not considered cryptographically verified unless a future verifier explicitly validates them against a supported identity method.
+
+CatalogLock does not execute discovered MCP tools. A clean tool-surface lock is evidence that the advertised runtime definition has not drifted, not authorization to invoke it.

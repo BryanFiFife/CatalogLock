@@ -5,6 +5,8 @@ export * from './net.js';
 export * from './schema.js';
 export * from './trust.js';
 export * from './resolver.js';
+export * from './mcp.js';
+export * from './audit.js';
 export * from './lockfile.js';
 export * from './diff.js';
 export * from './reporters/json.js';

@@ -3,10 +3,10 @@ import { policyFingerprint } from './policy.js';
 import { publisherFromIdentifier } from './trust.js';
 import type { CatalogLockfile, LockedCatalog, LockedEntry, Policy, ResolveResult } from './types.js';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 
 function lockEntry(entry: ResolveResult['catalogs'][number]['catalog']['entries'][number], trustScore: number, signaturePresent: boolean): LockedEntry {
-  const out: LockedEntry = {
+  return {
     identifier: entry.identifier,
     displayName: entry.displayName,
     type: entry.type,
@@ -20,10 +20,9 @@ function lockEntry(entry: ResolveResult['catalogs'][number]['catalog']['entries'
     capabilities: Array.isArray(entry.capabilities) ? [...entry.capabilities].sort() : [],
     tags: Array.isArray(entry.tags) ? [...entry.tags].sort() : []
   };
-  return out;
 }
 
-export function createLockfile(result: ResolveResult, policy: Policy): CatalogLockfile {
+export function createLockfile(result: ResolveResult & { mcpSurfaces?: CatalogLockfile['mcpSurfaces'] }, policy: Policy): CatalogLockfile {
   const trustMap = new Map(result.trust.map((t) => [`${t.sourceCatalog}\0${t.identifier}`, t]));
   const catalogs: LockedCatalog[] = result.catalogs.map((c) => ({
     url: c.url,
@@ -36,16 +35,21 @@ export function createLockfile(result: ResolveResult, policy: Policy): CatalogLo
       })
       .sort((a,b) => a.identifier.localeCompare(b.identifier))
   })).sort((a,b) => a.url.localeCompare(b.url));
-  const graphSha256 = sha256(canonicalJson(catalogs));
+
+  const mcpSurfaces = [...(result.mcpSurfaces ?? [])].sort((a,b) => a.identifier.localeCompare(b.identifier) || a.endpoint.localeCompare(b.endpoint));
+  const graphSha256 = sha256(canonicalJson({ catalogs, mcpSurfaces }));
   return {
-    lockVersion: 1,
+    lockVersion: 2,
     generatedBy: `cataloglock@${VERSION}`,
     root: result.root,
     policySha256: policyFingerprint(policy),
     graphSha256,
     catalogs,
+    mcpSurfaces,
     findings: result.findings.map(({ ruleId, severity, message, location }) => ({ ruleId, severity, message, ...(location ? { location } : {}) }))
   };
 }
 
-export function serializeLockfile(lock: CatalogLockfile): string { return prettyCanonicalJson(lock); }
+export function serializeLockfile(lock: CatalogLockfile): string {
+  return prettyCanonicalJson(lock);
+}

@@ -10,5 +10,10 @@
   "allowCompatibilityArdJson": true,
   "requirePublisherMatch": true,
   "requireHttpsEntries": true,
+  "inspectMcpTools": true,
+  "requireMcpInspection": false,
+  "maxMcpPages": 25,
+  "maxMcpTools": 5000,
+  "mcpProtocolVersion": "2026-07-28",
   "failOn": "error"
 }

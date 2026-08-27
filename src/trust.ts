@@ -18,7 +18,6 @@ export function identityHost(identity: string): string | undefined {
       const first = rest.split(':')[0];
       if (!first) return undefined;
       const decoded = decodeURIComponent(first).toLowerCase();
-      // did:web permits percent-encoded ports. Authority checks are host based.
       return decoded.startsWith('[') ? new URL(`https://${decoded}`).hostname.toLowerCase() : decoded.split(':')[0];
     }
     if (identity.startsWith('spiffe://') || identity.startsWith('https://')) return new URL(identity).hostname.toLowerCase();
@@ -82,7 +81,6 @@ export function assessEntryTrust(entry: CatalogEntry, sourceCatalog: string, req
 
   const signaturePresent = entry.trustManifest?.signature !== undefined;
   const attestations = attestationNames(entry.trustManifest);
-  // Score only authority-binding checks. Unverified signatures/attestation strings add zero points.
   let score = 0;
   if (publisherMatchesSource) score += 50;
   if (entryUrlWithinPublisher) score += 20;

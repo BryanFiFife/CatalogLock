@@ -1,2 +1,2 @@
-export declare function main(argv?: any): Promise<number>;
+export declare function main(argv?: string[]): Promise<number>;
 //# sourceMappingURL=cli.d.ts.map

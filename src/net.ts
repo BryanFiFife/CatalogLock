@@ -95,7 +95,13 @@ export function validateOutboundUrl(raw: string, policy: Policy): URL {
   return url;
 }
 
-async function requestPinned(url: URL, address: string, policy: Policy): Promise<FetchResult> {
+interface RequestOptions {
+  method: 'GET' | 'POST';
+  body?: string;
+  headers?: Record<string, string>;
+}
+
+async function requestPinned(url: URL, address: string, policy: Policy, options: RequestOptions): Promise<FetchResult> {
   const transport = url.protocol === 'https:' ? https : http;
   return await new Promise<FetchResult>((resolve, reject) => {
     const req = transport.request({
@@ -103,18 +109,25 @@ async function requestPinned(url: URL, address: string, policy: Policy): Promise
       hostname: url.hostname,
       port: url.port || undefined,
       path: `${url.pathname}${url.search}`,
-      method: 'GET',
+      method: options.method,
       headers: {
-        accept: 'application/json, application/ai-catalog+json;q=0.9, */*;q=0.1',
-        'user-agent': 'CatalogLock/0.1 (+https://github.com/BryanFiFife/CatalogLock)'
+        accept: 'application/json, application/ai-catalog+json;q=0.9, application/mcp-server-card+json;q=0.9, text/event-stream;q=0.8, */*;q=0.1',
+        'user-agent': 'CatalogLock/0.2 (+https://github.com/BryanFiFife/CatalogLock)',
+        ...(options.body ? { 'content-length': String(Buffer.byteLength(options.body)) } : {}),
+        ...(options.headers ?? {})
       },
       servername: url.protocol === 'https:' ? url.hostname : undefined,
-      lookup: (_hostname: any, options: any, callback: any) => { const family = net.isIP(address) as 4 | 6; if (options?.all) callback(null, [{ address, family }]); else callback(null, address, family); },
+      lookup: (_hostname: unknown, opts: unknown, callback: (err: Error|null, address: string|Array<{address:string;family:number}>, family?: number) => void) => {
+        const family = net.isIP(address) as 4 | 6;
+        const all = !!(opts && typeof opts === 'object' && 'all' in opts && (opts as {all?:boolean}).all);
+        if (all) callback(null, [{ address, family }]);
+        else callback(null, address, family);
+      },
       timeout: policy.timeoutMs
-    }, (res: any) => {
-      const chunks: any[] = [];
+    }, (res) => {
+      const chunks: Buffer[] = [];
       let bytes = 0;
-      res.on('data', (chunk: any) => {
+      res.on('data', (chunk: Buffer) => {
         bytes += chunk.length;
         if (bytes > policy.maxResponseBytes) {
           req.destroy(new Error(`response exceeds ${policy.maxResponseBytes} bytes`));
@@ -132,8 +145,34 @@ async function requestPinned(url: URL, address: string, policy: Policy): Promise
     });
     req.on('timeout', () => req.destroy(new Error(`request timed out after ${policy.timeoutMs}ms`)));
     req.on('error', reject);
+    if (options.body) req.write(options.body);
     req.end();
   });
+}
+
+async function safeRequest(
+  rawUrl: string,
+  policy: Policy,
+  resolver: AddressResolver,
+  options: RequestOptions,
+  redirects = 0
+): Promise<FetchResult> {
+  const url = validateOutboundUrl(rawUrl, policy);
+  const addresses = await resolver(url.hostname);
+  if (addresses.length === 0) throw new Error(`no addresses resolved for ${url.hostname}`);
+  const bad = addresses.filter((ip) => !isPublicIp(ip));
+  if (bad.length) throw new Error(`refusing non-public address for ${url.hostname}: ${bad.join(', ')}`);
+  const result = await requestPinned(url, addresses[0]!, policy, options);
+  if ([301, 302, 303, 307, 308].includes(result.status)) {
+    if (redirects >= policy.maxRedirects) throw new Error('redirect limit exceeded');
+    if (!result.location) throw new Error('redirect received without Location header');
+    const next = new URL(result.location, url).toString();
+    if (options.method === 'POST' && ![307, 308].includes(result.status)) {
+      throw new Error(`refusing unsafe POST redirect with HTTP ${result.status}`);
+    }
+    return safeRequest(next, policy, resolver, options, redirects + 1);
+  }
+  return result;
 }
 
 export async function safeFetch(
@@ -142,20 +181,22 @@ export async function safeFetch(
   resolver: AddressResolver = systemResolve,
   redirects = 0
 ): Promise<FetchResult> {
-  const url = validateOutboundUrl(rawUrl, policy);
-  const addresses = await resolver(url.hostname);
-  if (addresses.length === 0) throw new Error(`no addresses resolved for ${url.hostname}`);
-  const bad = addresses.filter((ip) => !isPublicIp(ip));
-  if (bad.length) throw new Error(`refusing non-public address for ${url.hostname}: ${bad.join(', ')}`);
-  const result = await requestPinned(url, addresses[0]!, policy);
-  if ([301, 302, 303, 307, 308].includes(result.status)) {
-    if (redirects >= policy.maxRedirects) throw new Error('redirect limit exceeded');
-    if (!result.location) throw new Error('redirect received without Location header');
-    const next = new URL(result.location, url).toString();
-    // Every hop is parsed, DNS-resolved, public-IP checked and socket-pinned again.
-    return safeFetch(next, policy, resolver, redirects + 1);
-  }
-  return result;
+  return safeRequest(rawUrl, policy, resolver, { method: 'GET' }, redirects);
+}
+
+export async function safePostJson(
+  rawUrl: string,
+  body: unknown,
+  policy: Policy,
+  resolver: AddressResolver = systemResolve,
+  headers: Record<string, string> = {}
+): Promise<FetchResult> {
+  const payload = JSON.stringify(body);
+  return safeRequest(rawUrl, policy, resolver, {
+    method: 'POST',
+    body: payload,
+    headers: { 'content-type': 'application/json', ...headers }
+  });
 }
 
 export function targetToCandidateUrls(target: string, policy: Policy): string[] {

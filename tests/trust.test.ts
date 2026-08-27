@@ -2,20 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assessEntryTrust, assessHostTrust, hostWithin, identityHost, publisherFromIdentifier } from '../src/trust.js';
 
-// 29
 test('extracts publisher from urn:air',()=>assert.equal(publisherFromIdentifier('urn:air:example.com:agent:x'),'example.com'));
-// 30
 test('hostWithin accepts publisher subdomain but not suffix trick',()=>{ assert.equal(hostWithin('api.example.com','example.com'),true); assert.equal(hostWithin('example.com.evil.test','example.com'),false); });
-// 31
 test('identityHost understands did:web',()=>assert.equal(identityHost('did:web:example.com:user:alice'),'example.com'));
-// 32
 test('identityHost understands SPIFFE',()=>assert.equal(identityHost('spiffe://example.com/service/a'),'example.com'));
-// 33
 test('trust assessment flags publisher/source mismatch critical',()=>{ const e:any={identifier:'urn:air:example.com:agent:x',displayName:'X',type:'application/a2a-agent-card+json',url:'https://example.com/x'}; const r=assessEntryTrust(e,'https://evil.test/.well-known/ai-catalog.json'); assert.ok(r.findings.some(f=>f.ruleId==='authority/publisher-source'&&f.severity==='critical')); });
-// 34
 test('trust assessment scores aligned identity',()=>{ const e:any={identifier:'urn:air:example.com:agent:x',displayName:'X',type:'application/a2a-agent-card+json',url:'https://api.example.com/x',trustManifest:{identity:'https://id.example.com',signature:'jws'}}; const r=assessEntryTrust(e,'https://example.com/.well-known/ai-catalog.json'); assert.equal(r.findings.length,0); assert.equal(r.assessment.score,100); });
-
-// 39
-test('host trust identity mismatch is critical',()=>{ const c:any={specVersion:'0.9',host:{trustManifest:{identity:'https://evil.test'}},entries:[]}; const f=assessHostTrust(c,'https://example.com/.well-known/ai-catalog.json'); assert.ok(f.some(x=>x.ruleId==='authority/host-trust-identity'&&x.severity==='critical')); });
-// 40
+test('host trust identity mismatch is critical',()=>{ const c:any={specVersion:'0.91',host:{trustManifest:{identity:'https://evil.test'}},entries:[]}; const f=assessHostTrust(c,'https://example.com/.well-known/ai-catalog.json'); assert.ok(f.some(x=>x.ruleId==='authority/host-trust-identity'&&x.severity==='critical')); });
 test('publisher mismatch enforcement can be disabled by policy',()=>{ const e:any={identifier:'urn:air:example.com:agent:x',displayName:'X',type:'application/a2a-agent-card+json',url:'https://example.com/x'}; const r=assessEntryTrust(e,'https://mirror.test/.well-known/ai-catalog.json',false); assert.ok(!r.findings.some(f=>f.ruleId==='authority/publisher-source')); assert.equal(r.assessment.publisherMatchesSource,false); });

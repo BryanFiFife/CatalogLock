@@ -58,6 +58,11 @@ export interface Policy {
   allowCompatibilityArdJson: boolean;
   requirePublisherMatch: boolean;
   requireHttpsEntries: boolean;
+  inspectMcpTools: boolean;
+  requireMcpInspection: boolean;
+  maxMcpPages: number;
+  maxMcpTools: number;
+  mcpProtocolVersion: string;
   failOn: Severity;
 }
 
@@ -98,6 +103,36 @@ export interface ResolveResult {
   trust: TrustAssessment[];
 }
 
+export interface McpTool {
+  name: string;
+  title?: string;
+  description?: string;
+  inputSchema?: unknown;
+  outputSchema?: unknown;
+  [key: string]: unknown;
+}
+
+export interface LockedMcpTool {
+  name: string;
+  toolSha256: string;
+  inputSchemaSha256?: string;
+  outputSchemaSha256?: string;
+}
+
+export interface McpSurfaceSnapshot {
+  identifier: string;
+  cardUrl?: string;
+  cardSha256: string;
+  endpoint: string;
+  protocolVersion: string;
+  toolsSha256: string;
+  tools: LockedMcpTool[];
+}
+
+export interface AuditResult extends ResolveResult {
+  mcpSurfaces: McpSurfaceSnapshot[];
+}
+
 export interface LockedEntry {
   identifier: string;
   displayName: string;
@@ -120,17 +155,34 @@ export interface LockedCatalog {
 }
 
 export interface CatalogLockfile {
-  lockVersion: 1;
+  lockVersion: 1 | 2;
   generatedBy: string;
   root: string;
   policySha256: string;
   graphSha256: string;
   catalogs: LockedCatalog[];
+  mcpSurfaces?: McpSurfaceSnapshot[];
   findings: Array<Pick<Finding, 'ruleId' | 'severity' | 'message' | 'location'>>;
 }
 
 export interface DiffChange {
-  kind: 'root-changed' | 'policy-changed' | 'catalog-added' | 'catalog-removed' | 'catalog-changed' | 'resource-added' | 'resource-removed' | 'resource-changed' | 'authority-changed';
+  kind:
+    | 'root-changed'
+    | 'policy-changed'
+    | 'catalog-added'
+    | 'catalog-removed'
+    | 'catalog-changed'
+    | 'resource-added'
+    | 'resource-removed'
+    | 'resource-changed'
+    | 'authority-changed'
+    | 'mcp-surface-added'
+    | 'mcp-surface-removed'
+    | 'mcp-card-changed'
+    | 'mcp-endpoint-changed'
+    | 'mcp-tool-added'
+    | 'mcp-tool-removed'
+    | 'mcp-tool-changed';
   severity: Severity;
   identifier: string;
   message: string;
@@ -151,6 +203,13 @@ export interface LockDiff {
     removedResources: number;
     changedResources: number;
     authorityChanges: number;
+    addedMcpSurfaces: number;
+    removedMcpSurfaces: number;
+    changedMcpCards: number;
+    changedMcpEndpoints: number;
+    addedMcpTools: number;
+    removedMcpTools: number;
+    changedMcpTools: number;
     highestSeverity: Severity;
   };
 }

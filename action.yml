@@ -1,5 +1,5 @@
 name: CatalogLock
-description: Security-gate Agentic Resource Discovery catalogs and emit a deterministic lockfile, SARIF and HTML report.
+description: Security-gate ARD catalogs and live MCP tool surfaces; emit a deterministic lockfile, SARIF and HTML report.
 author: BryanFiFife
 branding:
   icon: lock
@@ -15,6 +15,10 @@ inputs:
     description: info, warning, error or critical
     required: false
     default: error
+  inspect-mcp-tools:
+    description: Inspect public MCP Server Cards and lock live tools/list surfaces
+    required: false
+    default: "true"
   lockfile:
     description: Output lockfile path
     required: false
@@ -34,6 +38,10 @@ outputs:
     description: Finding count
   catalogs:
     description: Resolved catalog count
+  mcp-surfaces:
+    description: Locked MCP server surface count
+  mcp-tools:
+    description: Locked MCP tool count
 runs:
   using: node20
   main: dist/action.cjs
