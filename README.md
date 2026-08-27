@@ -5,6 +5,7 @@
 ### **Lock the agentic supply chain before your agent connects to it.**
 
 [![CI](https://github.com/BryanFiFife/CatalogLock/actions/workflows/ci.yml/badge.svg)](https://github.com/BryanFiFife/CatalogLock/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/BryanFiFife/CatalogLock?display_name=tag&sort=semver)](https://github.com/BryanFiFife/CatalogLock/releases/latest)
 [![Node 20+](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-7c3aed)](LICENSE)
 [![Runtime deps](https://img.shields.io/badge/runtime%20dependencies-0-00b894)](#security-model)
