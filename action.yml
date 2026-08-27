@@ -1,12 +1,12 @@
 name: CatalogLock
-description: Security-gate ARD catalogs and live MCP tool surfaces; emit a deterministic lockfile, SARIF and HTML report.
+description: Security-gate ARD v0.91 discovery, trust evidence, and complete MCP protocol surfaces with deterministic lockfiles.
 author: BryanFiFife
 branding:
   icon: lock
   color: purple
 inputs:
   target:
-    description: Domain or ARD ai-catalog URL to scan
+    description: Domain, ARD manifest URL, or HTML page advertising rel="ard"
     required: true
   policy:
     description: Optional CatalogLock policy JSON path
@@ -15,10 +15,17 @@ inputs:
     description: info, warning, error or critical
     required: false
     default: error
-  inspect-mcp-tools:
-    description: Inspect public MCP Server Cards and lock live tools/list surfaces
+  inspect-mcp-primitives:
+    description: Inspect and lock tools, prompts, resources and resource templates
     required: false
     default: "true"
+  inspect-mcp-discover:
+    description: Inspect and lock server/discover capabilities, extensions and instructions
+    required: false
+    default: "true"
+  inspect-mcp-tools:
+    description: Deprecated compatibility alias for inspect-mcp-primitives
+    required: false
   lockfile:
     description: Output lockfile path
     required: false
@@ -37,11 +44,17 @@ outputs:
   findings:
     description: Finding count
   catalogs:
-    description: Resolved catalog count
+    description: Resolved ARD entry-source count
   mcp-surfaces:
-    description: Locked MCP server surface count
+    description: Locked MCP profile/endpoint surface count
   mcp-tools:
     description: Locked MCP tool count
+  mcp-prompts:
+    description: Locked MCP prompt count
+  mcp-resources:
+    description: Locked MCP resource count
+  mcp-resource-templates:
+    description: Locked MCP resource-template count
 runs:
-  using: node20
+  using: node24
   main: dist/action.cjs

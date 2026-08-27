@@ -29,14 +29,16 @@ function help(): string {
   return `CatalogLock ${VERSION}
 
 Usage:
-  cataloglock scan <domain|catalog-url> [--format json|html|sarif] [--output FILE] [--policy FILE] [--fail-on LEVEL] [--no-mcp-tools]
-  cataloglock lock <domain|catalog-url> [--output cataloglock.lock.json] [--policy FILE] [--no-mcp-tools]
+  cataloglock scan <domain|url> [--format json|html|sarif] [--output FILE] [--policy FILE] [--fail-on LEVEL]
+  cataloglock lock <domain|url> [--output cataloglock.lock.json] [--policy FILE]
   cataloglock diff <old.lock.json> <new.lock.json> [--format text|json]
-  cataloglock verify <domain|catalog-url> --lock cataloglock.lock.json [--policy FILE] [--no-mcp-tools]
+  cataloglock verify <domain|url> --lock cataloglock.lock.json [--policy FILE]
   cataloglock version
 
-MCP tool-surface inspection is enabled by default for public, unauthenticated streamable-http Server Cards.
-Use --no-mcp-tools to disable live tools/list inspection.
+MCP 2026-07-28 server/discover and primitive-surface inspection are enabled by default.
+Use --no-mcp-primitives to skip tools/prompts/resources/templates; --no-mcp-discover to skip server/discover.
+--no-mcp-tools remains as a deprecated compatibility alias for --no-mcp-primitives.
+Authenticated/contextual profiles and read-only prompt/resource/extension probes are configured in policy JSON.
 Levels: info, warning, error, critical
 `;
 }
@@ -49,18 +51,31 @@ async function readPolicy(file?: string): Promise<Policy> {
 function setFailOn(policy: Policy, value: unknown): Policy {
   if (typeof value !== 'string') return policy;
   if (!['info','warning','error','critical'].includes(value)) throw new Error(`invalid --fail-on ${value}`);
-  return { ...policy, failOn: value as Severity };
+  return mergePolicy({ ...policy, failOn: value as Severity });
 }
 
 function applyCliPolicy(policy: Policy, args: Args): Policy {
-  return {
+  const disablePrimitives = args['no-mcp-primitives'] === true || args['no-mcp-tools'] === true;
+  let profiles = policy.mcpProfiles;
+  if (typeof args['mcp-profile'] === 'string') {
+    const wanted = new Set(args['mcp-profile'].split(',').map(x=>x.trim()).filter(Boolean));
+    profiles = policy.mcpProfiles.filter(p=>wanted.has(p.name));
+    const missing = [...wanted].filter(name=>!profiles.some(p=>p.name===name));
+    if (missing.length) throw new Error(`unknown --mcp-profile: ${missing.join(', ')}`);
+    if (!profiles.length) throw new Error('--mcp-profile selected no profiles');
+  }
+  return mergePolicy({
     ...policy,
-    ...(args['no-mcp-tools'] === true ? { inspectMcpTools: false } : {})
-  };
+    mcpProfiles: profiles,
+    ...(disablePrimitives ? { inspectMcpPrimitives: false } : {}),
+    ...(args['no-mcp-discover'] === true ? { inspectMcpDiscover: false } : {}),
+    ...(args['require-mcp-inspection'] === true ? { requireMcpInspection: true } : {}),
+    ...(args['require-verified-trust'] === true ? { requireVerifiedTrust: true } : {})
+  });
 }
 
 function shouldFail(findings: {severity: Severity}[], threshold: Severity): boolean {
-  return findings.some((f)=>severityRank(f.severity)>=severityRank(threshold));
+  return findings.some(f => severityRank(f.severity) >= severityRank(threshold));
 }
 
 async function writeOrStdout(content: string, file?: unknown): Promise<void> {
@@ -118,7 +133,7 @@ export async function main(argv=process.argv.slice(2)): Promise<number> {
       const lines=[
         `CatalogLock diff: ${diff.changed?'CHANGED':'clean'}`,
         `Blast radius: ${JSON.stringify(diff.blastRadius)}`,
-        ...diff.changes.map((c)=>`[${c.severity.toUpperCase()}] ${c.kind}: ${c.message}`)
+        ...diff.changes.map(c=>`[${c.severity.toUpperCase()}] ${c.kind}: ${c.message}`)
       ];
       await writeOrStdout(lines.join('\n')+'\n',args.output);
     }
@@ -127,4 +142,4 @@ export async function main(argv=process.argv.slice(2)): Promise<number> {
   throw new Error(`unknown command: ${command}`);
 }
 
-main().then((code)=>{process.exitCode=code;}).catch((err)=>{console.error(err instanceof Error?err.message:String(err));process.exitCode=1;});
+main().then(code=>{process.exitCode=code;}).catch(err=>{console.error(err instanceof Error?err.message:String(err));process.exitCode=1;});

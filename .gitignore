@@ -1,0 +1,16 @@
+node_modules/
+coverage/
+*.log
+.DS_Store
+cataloglock.lock.json
+cataloglock.sarif
+cataloglock-report.html
+.local-types/
+.test-dist/
+.smoke/
+.release/
+release/
+cataloglock-*.tgz
+.env
+.env.*
+!.env.example

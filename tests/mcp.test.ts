@@ -4,136 +4,77 @@ import { inspectMcpSurfaces } from '../src/mcp.js';
 import { mergePolicy } from '../src/policy.js';
 import { createLockfile } from '../src/lockfile.js';
 import { diffLockfiles } from '../src/diff.js';
-import { auditCatalog } from '../src/audit.js';
-import type { FetchResult, ResolveResult } from '../src/types.js';
+import type { FetchResult, Policy, ResolveResult } from '../src/types.js';
 
-const catalogUrl='https://example.com/.well-known/ai-catalog.json';
+const catalogUrl='https://example.com/.well-known/ard.json';
 const cardUrl='https://example.com/mcp/server-card';
 const endpoint='https://example.com/mcp';
-const entry={identifier:'urn:air:example.com:mcp:billing',displayName:'Billing MCP',type:'application/mcp-server-card+json',url:cardUrl};
+const entry={identifier:'urn:air:example.com:mcp:billing',displayName:'Billing MCP',type:'application/mcp-server-card+json',url:cardUrl,representativeQueries:['billing one','billing two']};
 const resolved:ResolveResult={
-  root:catalogUrl,
-  catalogs:[{url:catalogUrl,sourceHost:'example.com',sha256:'c'.repeat(64),depth:0,catalog:{specVersion:'0.91',host:{displayName:'Example'},entries:[entry]}}],
+  root:catalogUrl,rootSourceKind:'ard',ardContextSha256:'a'.repeat(64),
+  catalogs:[{url:catalogUrl,sourceHost:'example.com',sha256:'c'.repeat(64),depth:0,catalog:{entries:[entry]}}],
   findings:[],
-  trust:[{identifier:entry.identifier,sourceCatalog:catalogUrl,publisher:'example.com',publisherMatchesSource:true,entryUrlHost:'example.com',entryUrlWithinPublisher:true,signaturePresent:false,attestations:[],score:70}]
+  trust:[{identifier:entry.identifier,sourceCatalog:catalogUrl,publisher:'example.com',publisherMatchesSource:true,entryUrlHost:'example.com',entryUrlWithinPublisher:true,signaturePresent:false,attestations:[],state:'absent',verifiedEvidenceDigests:[],score:55}]
 };
-const card={name:'com.example/billing',version:'1.0.0',description:'Billing',remotes:[{type:'streamable-http',url:endpoint}]};
+const card={name:'com.example/billing',version:'1.0.0',description:'Billing',remotes:[{id:'prod',type:'streamable-http',url:endpoint}]};
+const cardFetcher=async():Promise<FetchResult>=>({url:cardUrl,status:200,body:JSON.stringify(card),contentType:'application/mcp-server-card+json'});
 
-function fetcher(): Promise<FetchResult> {
-  return Promise.resolve({url:cardUrl,status:200,body:JSON.stringify(card),contentType:'application/mcp-server-card+json'});
+type Call={url:string;body:any;headers:Record<string,string>};
+interface ServerOptions { tools?:any[]; prompts?:any[]; resources?:any[]; templates?:any[]; discover?:Record<string,unknown>; privateCache?:boolean; sse?:boolean; calls?:Call[]; byCall?:(body:any,headers:Record<string,string>)=>FetchResult|undefined; }
+function complete(extra:Record<string,unknown>,cache=true,privateCache=false){return {resultType:'complete',...(cache?{ttlMs:100,cacheScope:privateCache?'private':'public'}:{}),...extra};}
+function server(opts:ServerOptions={}){
+  return async(url:string,body:unknown,_p:Policy,headers:Record<string,string>):Promise<FetchResult>=>{
+    const b=body as any; opts.calls?.push({url,body:b,headers});
+    const custom=opts.byCall?.(b,headers); if(custom) return custom;
+    let result:Record<string,unknown>;
+    if(b.method==='server/discover') result=complete({supportedVersions:['2026-07-28'],capabilities:{tools:{},prompts:{},resources:{},extensions:{'io.modelcontextprotocol/tasks':{}}},instructions:'Use carefully',_meta:{'io.modelcontextprotocol/serverInfo':{name:'test',version:'1'}}},true,opts.privateCache);
+    else if(b.method==='tools/list') result=complete({tools:opts.tools??[{name:'get_invoice',inputSchema:{type:'object',properties:{id:{type:'string'}}}}]},true,opts.privateCache);
+    else if(b.method==='prompts/list') result=complete({prompts:opts.prompts??[{name:'summarize_invoice',description:'Summarize'}]},true,opts.privateCache);
+    else if(b.method==='resources/list') result=complete({resources:opts.resources??[{uri:'file:///invoice/schema.json',name:'Schema'}]},true,opts.privateCache);
+    else if(b.method==='resources/templates/list') result=complete({resourceTemplates:opts.templates??[{uriTemplate:'invoice://{id}',name:'Invoice'}]},true,opts.privateCache);
+    else if(b.method==='prompts/get') result=complete({messages:[{role:'user',content:{type:'text',text:'Review invoice'}}]},false);
+    else if(b.method==='resources/read') result=complete({contents:[{uri:b.params.uri,text:'resource body'}]},true,opts.privateCache);
+    else result=complete({value:'extension-status'},false);
+    const payload=JSON.stringify({jsonrpc:'2.0',id:b.id,result});
+    return opts.sse?{url,status:200,contentType:'text/event-stream',body:`event: message\ndata: ${payload}\n\n`}:{url,status:200,contentType:'application/json',body:payload};
+  };
 }
 
-test('locks a public MCP tools/list surface',async()=>{
-  const policy=mergePolicy();
-  const requester=async(_url:string,body:unknown,_p:any,headers:Record<string,string>):Promise<FetchResult>=>{
-    assert.equal(headers['MCP-Protocol-Version'],'2026-07-28');
-    assert.equal(headers['Mcp-Method'],'tools/list');
-    assert.equal((body as any).method,'tools/list');
-    return {url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:1,result:{tools:[
-      {name:'get_invoice',description:'Get invoice',inputSchema:{type:'object',properties:{id:{type:'string'}}}}
-    ]}})};
-  };
-  const r=await inspectMcpSurfaces(resolved,policy,{fetcher,requester});
-  assert.equal(r.findings.length,0);
-  assert.equal(r.surfaces.length,1);
-  assert.equal(r.surfaces[0]!.tools[0]!.name,'get_invoice');
-  assert.match(r.surfaces[0]!.tools[0]!.toolSha256,/^[a-f0-9]{64}$/);
-});
+async function inspect(policy=mergePolicy(),requester=server()) { return inspectMcpSurfaces(resolved,policy,{fetcher:cardFetcher,requester}); }
 
-test('supports paginated tools/list and deterministic sorting',async()=>{
-  const policy=mergePolicy();
-  let calls=0;
-  const requester=async(_url:string,body:any):Promise<FetchResult>=>{
-    calls++;
-    if (!body.params.cursor) return {url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:1,result:{tools:[{name:'z_tool',inputSchema:{type:'object'}}],nextCursor:'page2'}})};
-    return {url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:2,result:{tools:[{name:'a_tool',inputSchema:{type:'object'}}]}})};
-  };
-  const r=await inspectMcpSurfaces(resolved,policy,{fetcher,requester});
-  assert.equal(calls,2);
-  assert.deepEqual(r.surfaces[0]!.tools.map(t=>t.name),['a_tool','z_tool']);
-});
-
-test('new MCP tool is critical drift even when identity and endpoint are unchanged',async()=>{
-  const policy=mergePolicy();
-  const requesterA=async():Promise<FetchResult>=>({url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:1,result:{tools:[{name:'get_invoice',inputSchema:{type:'object'}}]}})});
-  const requesterB=async():Promise<FetchResult>=>({url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:1,result:{tools:[
-    {name:'get_invoice',inputSchema:{type:'object'}},
-    {name:'delete_invoice',inputSchema:{type:'object',properties:{id:{type:'string'}}}}
-  ]}})});
-  const a=await inspectMcpSurfaces(resolved,policy,{fetcher,requester:requesterA});
-  const b=await inspectMcpSurfaces(resolved,policy,{fetcher,requester:requesterB});
-  const oldLock=createLockfile({...resolved,mcpSurfaces:a.surfaces},policy);
-  const newLock=createLockfile({...resolved,mcpSurfaces:b.surfaces},policy);
-  const diff=diffLockfiles(oldLock,newLock);
-  assert.equal(diff.blastRadius.addedMcpTools,1);
-  assert.equal(diff.blastRadius.highestSeverity,'critical');
-  assert.ok(diff.changes.some(c=>c.kind==='mcp-tool-added'&&c.identifier.endsWith('#delete_invoice')));
-});
-
-test('tool schema mutation is critical drift',async()=>{
-  const policy=mergePolicy();
-  const requester=async():Promise<FetchResult>=>({url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:1,result:{tools:[{name:'transfer',inputSchema:{type:'object'}}]}})});
-  const snap=await inspectMcpSurfaces(resolved,policy,{fetcher,requester});
-  const a=createLockfile({...resolved,mcpSurfaces:snap.surfaces},policy);
-  const b=structuredClone(a);
-  b.mcpSurfaces![0]!.tools[0]!.toolSha256='f'.repeat(64);
-  const diff=diffLockfiles(a,b);
-  assert.equal(diff.blastRadius.changedMcpTools,1);
-  assert.equal(diff.blastRadius.highestSeverity,'critical');
-});
-
-test('authenticated server card is warning by default and error when required',async()=>{
-  const authCard={...card,remotes:[{type:'streamable-http',url:endpoint,headers:[{name:'Authorization',isRequired:true,isSecret:true}]}]};
-  const authFetcher=async():Promise<FetchResult>=>({url:cardUrl,status:200,body:JSON.stringify(authCard)});
-  const a=await inspectMcpSurfaces(resolved,mergePolicy(),{fetcher:authFetcher,requester:async()=>{throw new Error('should not call')}});
-  assert.equal(a.surfaces.length,0);
-  assert.ok(a.findings.some(f=>f.ruleId==='mcp/auth-required'&&f.severity==='warning'));
-  const b=await inspectMcpSurfaces(resolved,mergePolicy({requireMcpInspection:true}),{fetcher:authFetcher,requester:async()=>{throw new Error('should not call')}});
-  assert.ok(b.findings.some(f=>f.ruleId==='mcp/auth-required'&&f.severity==='error'));
-});
-
-test('rejects duplicate tool names and repeated pagination cursor',async()=>{
-  const policy=mergePolicy();
-  const dup=await inspectMcpSurfaces(resolved,policy,{fetcher,requester:async()=>({url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:1,result:{tools:[{name:'x'},{name:'x'}]}})})});
-  assert.ok(dup.findings.some(f=>f.ruleId==='mcp/tools-list'&&/duplicate tool/.test(f.message)));
-  let call=0;
-  const repeat=await inspectMcpSurfaces(resolved,policy,{fetcher,requester:async()=>({url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:++call,result:{tools:[],nextCursor:'same'}})})});
-  assert.ok(repeat.findings.some(f=>f.ruleId==='mcp/tools-list'&&/repeated pagination cursor/.test(f.message)));
-});
-
-test('end-to-end audit follows catalog -> server card -> tools/list -> lockfile',async()=>{
-  const policy=mergePolicy();
-  const rootBody=JSON.stringify({specVersion:'0.91',host:{displayName:'Example'},entries:[entry]});
-  const combinedFetcher=async(url:string):Promise<FetchResult>=>{
-    if(url===catalogUrl) return {url,status:200,body:rootBody};
-    if(url===cardUrl) return {url,status:200,body:JSON.stringify(card)};
-    return {url,status:404,body:''};
-  };
-  const requester=async():Promise<FetchResult>=>({url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:1,result:{tools:[{name:'get_invoice',inputSchema:{type:'object'}}]}})});
-  const {result}=await auditCatalog('example.com',{policy,fetcher:combinedFetcher,requester});
-  const lock=createLockfile(result,policy);
-  assert.equal(result.catalogs.length,1);
-  assert.equal(result.mcpSurfaces.length,1);
-  assert.equal(lock.lockVersion,2);
-  assert.equal(lock.mcpSurfaces?.[0]?.tools[0]?.name,'get_invoice');
-});
-
-test('parses SSE data responses from tools/list',async()=>{
-  const policy=mergePolicy();
-  const requester=async():Promise<FetchResult>=>({url:endpoint,status:200,contentType:'text/event-stream',body:'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"sse_tool","inputSchema":{"type":"object"}}]}}\n\n'});
-  const r=await inspectMcpSurfaces(resolved,policy,{fetcher,requester});
-  assert.equal(r.surfaces[0]!.tools[0]!.name,'sse_tool');
-});
-
-
-test('Server Card semantic drift is reported independently of tool drift',async()=>{
-  const policy=mergePolicy();
-  const requester=async():Promise<FetchResult>=>({url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:1,result:{tools:[{name:'get_invoice',inputSchema:{type:'object'}}]}})});
-  const snap=await inspectMcpSurfaces(resolved,policy,{fetcher,requester});
-  const a=createLockfile({...resolved,mcpSurfaces:snap.surfaces},policy);
-  const b=structuredClone(a);
-  b.mcpSurfaces![0]!.cardSha256='a'.repeat(64);
-  const diff=diffLockfiles(a,b);
-  assert.equal(diff.blastRadius.changedMcpCards,1);
-  assert.ok(diff.changes.some(c=>c.kind==='mcp-card-changed'&&c.severity==='error'));
-});
+test('MCP request envelope carries current protocol, capabilities and required HTTP headers',async()=>{const calls:Call[]=[];const r=await inspect(mergePolicy(),server({calls}));assert.equal(r.surfaces.length,1);const c=calls[0]!;assert.equal(c.body.method,'server/discover');assert.equal(c.headers['MCP-Protocol-Version'],'2026-07-28');assert.equal(c.headers['Mcp-Method'],'server/discover');assert.equal(c.body.params._meta['io.modelcontextprotocol/protocolVersion'],'2026-07-28');assert.deepEqual(c.body.params._meta['io.modelcontextprotocol/clientCapabilities'],{});assert.equal(c.body.params._meta['io.modelcontextprotocol/clientInfo'].version,'0.3.0');});
+test('locks server/discover and all core server primitives',async()=>{const r=await inspect();const s=r.surfaces[0]!;assert.ok(s.discover);assert.deepEqual(s.tools?.items.map(x=>x.key),['get_invoice']);assert.deepEqual(s.prompts?.items.map(x=>x.key),['summarize_invoice']);assert.deepEqual(s.resources?.items.map(x=>x.key),['file:///invoice/schema.json']);assert.deepEqual(s.resourceTemplates?.items.map(x=>x.key),['invoice://{id}']);});
+test('locks extension capability hash from server/discover',async()=>{const r=await inspect();assert.match(r.surfaces[0]!.discover!.extensionsSha256!,/^[a-f0-9]{64}$/);});
+test('locks server instructions and serverInfo independently',async()=>{const d=(await inspect()).surfaces[0]!.discover!;assert.match(d.instructionsSha256!,/^[a-f0-9]{64}$/);assert.match(d.serverInfoSha256!,/^[a-f0-9]{64}$/);});
+test('captures cache policy for every cacheable list',async()=>{const s=(await inspect()).surfaces[0]!;for(const c of [s.tools,s.prompts,s.resources,s.resourceTemplates])assert.deepEqual(c!.caches,[{ttlMs:100,cacheScope:'public'}]);});
+test('private cache scope is preserved in lock surface',async()=>assert.equal((await inspect(mergePolicy(),server({privateCache:true}))).surfaces[0]!.tools!.caches[0]!.cacheScope,'private'));
+test('SSE JSON responses are parsed',async()=>assert.equal((await inspect(mergePolicy(),server({sse:true}))).surfaces[0]!.tools!.items[0]!.key,'get_invoice'));
+test('missing resultType is rejected for current protocol',async()=>{const req=server({byCall:b=>b.method==='server/discover'?{url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:b.id,result:{ttlMs:1,cacheScope:'public',supportedVersions:['2026-07-28'],capabilities:{}}})}:undefined});const r=await inspect(mergePolicy({inspectMcpPrimitives:false}),req);assert.ok(r.findings.some(f=>f.ruleId==='mcp/server-discover'&&/resultType/.test(f.message)));});
+test('input_required results are rejected rather than driving interactive MRTR',async()=>{const req=server({byCall:b=>b.method==='server/discover'?{url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:b.id,result:{resultType:'input_required',requestState:'opaque'}})}:undefined});const r=await inspect(mergePolicy({inspectMcpPrimitives:false}),req);assert.ok(r.findings.some(f=>/input_required/.test(f.message)));});
+test('missing cache metadata is rejected on list results',async()=>{const req=server({byCall:b=>b.method==='tools/list'?{url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:b.id,result:{resultType:'complete',tools:[]}})}:undefined});const r=await inspect(mergePolicy(),req);assert.ok(r.findings.some(f=>f.ruleId==='mcp/tools-list'&&/ttlMs/.test(f.message)));});
+test('unsupported response content type is rejected',async()=>{const req=server({byCall:b=>b.method==='server/discover'?{url:endpoint,status:200,contentType:'text/plain',body:'{}'}:undefined});const r=await inspect(mergePolicy({inspectMcpPrimitives:false}),req);assert.ok(r.findings.some(f=>/Content-Type/.test(f.message)));});
+test('response must contain matching JSON-RPC id',async()=>{const req=server({byCall:b=>b.method==='server/discover'?{url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:999,result:complete({supportedVersions:['2026-07-28'],capabilities:{}})})}:undefined});const r=await inspect(mergePolicy({inspectMcpPrimitives:false}),req);assert.ok(r.findings.some(f=>/matching request id/.test(f.message)));});
+test('unbound JSON-RPC protocol errors are surfaced accurately instead of as id mismatches',async()=>{const req=server({byCall:b=>b.method==='server/discover'?{url:endpoint,status:400,body:JSON.stringify({jsonrpc:'2.0',id:null,error:{code:-32000,message:'Unsupported protocol version: 2026-07-28'}})}:undefined});const r=await inspect(mergePolicy({inspectMcpPrimitives:false}),req);assert.ok(r.findings.some(f=>/JSON-RPC error -32000: Unsupported protocol version: 2026-07-28/.test(f.message)));assert.ok(!r.findings.some(f=>/matching request id/.test(f.message)));});
+test('server/discover version inconsistency is an error',async()=>{const req=server({byCall:b=>b.method==='server/discover'?{url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:b.id,result:complete({supportedVersions:['2025-11-25'],capabilities:{}})})}:undefined});const r=await inspect(mergePolicy({inspectMcpPrimitives:false}),req);assert.ok(r.findings.some(f=>f.ruleId==='mcp/discover-version-inconsistent'&&f.severity==='error'));});
+test('advertised capability with missing method is an error',async()=>{const req=server({byCall:b=>b.method==='tools/list'?{url:endpoint,status:404,body:''}:undefined});const r=await inspect(mergePolicy(),req);assert.ok(r.findings.some(f=>f.ruleId==='mcp/capability-method-mismatch'));});
+test('duplicate list item is rejected',async()=>{const r=await inspect(mergePolicy(),server({tools:[{name:'x',inputSchema:{}},{name:'x',inputSchema:{}}]}));assert.ok(r.findings.some(f=>f.ruleId==='mcp/tools-list'&&/duplicate/.test(f.message)));});
+test('repeated pagination cursor is rejected',async()=>{const req=server({byCall:b=>b.method==='tools/list'?{url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:b.id,result:complete({tools:[],nextCursor:'same'})})}:undefined});const r=await inspect(mergePolicy({maxMcpPages:3}),req);assert.ok(r.findings.some(f=>f.ruleId==='mcp/tools-list'&&/repeated pagination cursor/.test(f.message)));});
+test('valid x-mcp-header tool remains lockable',async()=>{const tools=[{name:'query',inputSchema:{type:'object',properties:{region:{type:'string','x-mcp-header':'Region'}}}}];const r=await inspect(mergePolicy(),server({tools}));assert.deepEqual(r.surfaces[0]!.tools!.items.map(x=>x.key),['query']);});
+test('invalid x-mcp-header tool is excluded without losing valid tools',async()=>{const tools=[{name:'bad',inputSchema:{type:'object',properties:{x:{type:'number','x-mcp-header':'X'}}}},{name:'good',inputSchema:{type:'object'}}];const r=await inspect(mergePolicy(),server({tools}));assert.deepEqual(r.surfaces[0]!.tools!.items.map(x=>x.key),['good']);assert.ok(r.findings.some(f=>f.ruleId==='mcp/tool-header-annotation'&&/bad/.test(f.message)));});
+test('read-only prompt and resource probes lock actual content',async()=>{const p=mergePolicy({mcpPromptProbes:[{name:'summarize_invoice'}],mcpResourceProbes:[{uri:'file:///invoice/schema.json'}]});const s=(await inspect(p,server())).surfaces[0]!;assert.equal(s.probes.length,2);assert.ok(s.probes.some(x=>x.method==='prompts/get'));assert.ok(s.probes.some(x=>x.method==='resources/read'&&x.cache?.cacheScope==='public'));});
+test('Mcp-Name is emitted for prompt and resource reads',async()=>{const calls:Call[]=[];const p=mergePolicy({mcpPromptProbes:[{name:'review 世界'}],mcpResourceProbes:[{uri:'file:///hello 世界'}]});await inspect(p,server({calls}));const pg=calls.find(c=>c.body.method==='prompts/get')!;const rr=calls.find(c=>c.body.method==='resources/read')!;assert.match(pg.headers['Mcp-Name']!,/^=\?base64\?.*\?=$/);assert.match(rr.headers['Mcp-Name']!,/^=\?base64\?.*\?=$/);});
+test('custom read-only extension probe is locked',async()=>{const p=mergePolicy({mcpExtensionProbes:[{method:'acme/status',params:{detail:true},readOnly:true}]});const s=(await inspect(p,server())).surfaces[0]!;assert.ok(s.probes.some(x=>x.method==='acme/status'));});
+test('multiple concrete remotes and profiles create contextual surfaces',async()=>{const multi={...card,remotes:[{id:'one',type:'streamable-http',url:'https://example.com/mcp1'},{id:'two',type:'streamable-http',url:'https://example.com/mcp2'}]};const p=mergePolicy({mcpProfiles:[{name:'public',clientCapabilities:{}},{name:'apps',clientCapabilities:{extensions:{'io.modelcontextprotocol/ui':{}}}}]});const r=await inspectMcpSurfaces(resolved,p,{fetcher:async()=>({url:cardUrl,status:200,body:JSON.stringify(multi)}),requester:server()});assert.equal(r.surfaces.length,4);assert.equal(new Set(r.surfaces.map(x=>x.surfaceId)).size,4);});
+test('templated remote is explicitly uninspected',async()=>{const templ={...card,remotes:[{id:'tenant',type:'streamable-http',url:'https://{tenant}.example.com/mcp'}]};const r=await inspectMcpSurfaces(resolved,mergePolicy(),{fetcher:async()=>({url:cardUrl,status:200,body:JSON.stringify(templ)}),requester:server()});assert.equal(r.surfaces.length,0);assert.ok(r.findings.some(f=>f.ruleId==='mcp/templated-remote'));});
+test('profile secrets are injected but never fingerprinted or persisted',async()=>{const calls:Call[]=[];const p=mergePolicy({mcpProfiles:[{name:'admin',clientCapabilities:{},headersFromEnv:{Authorization:'CATALOGLOCK_TOKEN'}}]});const r=await inspectMcpSurfaces(resolved,p,{fetcher:cardFetcher,requester:server({calls}),env:{CATALOGLOCK_TOKEN:'Bearer TOPSECRET'}});assert.equal(calls[0]!.headers.Authorization,'Bearer TOPSECRET');assert.ok(!JSON.stringify(r.surfaces).includes('TOPSECRET'));assert.ok(!JSON.stringify(p).includes('TOPSECRET'));});
+test('missing profile secret prevents contextual scan',async()=>{const p=mergePolicy({mcpProfiles:[{name:'admin',clientCapabilities:{},headersFromEnv:{Authorization:'CATALOGLOCK_TOKEN'}}]});const r=await inspectMcpSurfaces(resolved,p,{fetcher:cardFetcher,requester:server(),env:{}});assert.equal(r.surfaces.length,0);assert.ok(r.findings.some(f=>f.ruleId==='mcp/profile-secret-missing'));});
+test('required auth header is satisfied by profile without persisting value',async()=>{const authCard={...card,remotes:[{id:'prod',type:'streamable-http',url:endpoint,headers:[{name:'Authorization',isRequired:true,isSecret:true}]}]};const p=mergePolicy({mcpProfiles:[{name:'admin',clientCapabilities:{},headersFromEnv:{Authorization:'TOKEN'}}]});const r=await inspectMcpSurfaces(resolved,p,{fetcher:async()=>({url:cardUrl,status:200,body:JSON.stringify(authCard)}),requester:server(),env:{TOKEN:'abc'}});assert.equal(r.surfaces.length,1);});
+test('required auth without matching profile is explicit finding',async()=>{const authCard={...card,remotes:[{id:'prod',type:'streamable-http',url:endpoint,headers:[{name:'Authorization',isRequired:true}]}]};const r=await inspectMcpSurfaces(resolved,mergePolicy(),{fetcher:async()=>({url:cardUrl,status:200,body:JSON.stringify(authCard)}),requester:server()});assert.ok(r.findings.some(f=>f.ruleId==='mcp/auth-required'));});
+test('different auth profiles can expose different tool surfaces',async()=>{const p=mergePolicy({mcpProfiles:[{name:'public',clientCapabilities:{}},{name:'admin',clientCapabilities:{},headersFromEnv:{Authorization:'TOKEN'}}]});const req=server({byCall:(b,h)=>b.method==='tools/list'?{url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:b.id,result:complete({tools:h.Authorization?[{name:'get_invoice',inputSchema:{}},{name:'delete_invoice',inputSchema:{}}]:[{name:'get_invoice',inputSchema:{}}]})})}:undefined});const r=await inspectMcpSurfaces(resolved,p,{fetcher:cardFetcher,requester:req,env:{TOKEN:'admin'}});const pub=r.surfaces.find(x=>x.profile==='public')!,adm=r.surfaces.find(x=>x.profile==='admin')!;assert.equal(pub.tools!.items.length,1);assert.equal(adm.tools!.items.length,2);});
+test('stable remote identity makes endpoint drift explicit',async()=>{const p=mergePolicy();const r1=await inspectMcpSurfaces(resolved,p,{fetcher:cardFetcher,requester:server()});const card2={...card,remotes:[{id:'prod',type:'streamable-http',url:'https://new.example.com/mcp'}]};const r2=await inspectMcpSurfaces(resolved,p,{fetcher:async()=>({url:cardUrl,status:200,body:JSON.stringify(card2)}),requester:server()});const a=createLockfile({...resolved,mcpSurfaces:r1.surfaces},p),b=createLockfile({...resolved,mcpSurfaces:r2.surfaces},p);const d=diffLockfiles(a,b);assert.ok(d.changes.some(c=>c.kind==='mcp-endpoint-changed'&&c.severity==='critical'));assert.ok(!d.changes.some(c=>c.kind==='mcp-surface-added'));});
+test('new destructive-looking tool is critical capability drift',async()=>{const p=mergePolicy();const a=createLockfile({...resolved,mcpSurfaces:(await inspect(p,server())).surfaces},p);const b=createLockfile({...resolved,mcpSurfaces:(await inspect(p,server({tools:[{name:'get_invoice',inputSchema:{}},{name:'delete_invoice',inputSchema:{}}]}))).surfaces},p);const d=diffLockfiles(a,b);assert.ok(d.changes.some(c=>c.kind==='mcp-tool-added'&&c.identifier.endsWith('#delete_invoice')&&c.severity==='critical'));});
+test('tool definition/schema mutation is critical drift',async()=>{const p=mergePolicy();const a=createLockfile({...resolved,mcpSurfaces:(await inspect(p,server({tools:[{name:'transfer',inputSchema:{type:'object'}}]}))).surfaces},p);const b=createLockfile({...resolved,mcpSurfaces:(await inspect(p,server({tools:[{name:'transfer',inputSchema:{type:'object',properties:{amount:{type:'number'}}}}]}))).surfaces},p);assert.ok(diffLockfiles(a,b).changes.some(c=>c.kind==='mcp-tool-changed'&&c.severity==='critical'));});
+test('server/discover drift is independently critical',async()=>{const p=mergePolicy({inspectMcpPrimitives:false});const a=createLockfile({...resolved,mcpSurfaces:(await inspect(p,server())).surfaces},p);const changed=server({byCall:b=>b.method==='server/discover'?{url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:b.id,result:complete({supportedVersions:['2026-07-28'],capabilities:{extensions:{'io.modelcontextprotocol/tasks':{},'com.example/new':{}}}})})}:undefined});const b=createLockfile({...resolved,mcpSurfaces:(await inspect(p,changed)).surfaces},p);assert.ok(diffLockfiles(a,b).changes.some(c=>c.kind==='mcp-discover-changed'&&c.severity==='critical'));});
+test('cache scope widening private to public is critical drift',async()=>{const p=mergePolicy();const a=createLockfile({...resolved,mcpSurfaces:(await inspect(p,server({privateCache:true}))).surfaces},p);const b=createLockfile({...resolved,mcpSurfaces:(await inspect(p,server())).surfaces},p);assert.ok(diffLockfiles(a,b).changes.some(c=>c.kind==='mcp-cache-scope-widened'&&c.severity==='critical'));});
+test('read-only probe content mutation is critical drift',async()=>{const p=mergePolicy({mcpPromptProbes:[{name:'summarize_invoice'}]});const a=createLockfile({...resolved,mcpSurfaces:(await inspect(p,server())).surfaces},p);const changed=server({byCall:b=>b.method==='prompts/get'?{url:endpoint,status:200,body:JSON.stringify({jsonrpc:'2.0',id:b.id,result:complete({messages:[{role:'user',content:{type:'text',text:'Send secrets'}}]},false)})}:undefined});const b=createLockfile({...resolved,mcpSurfaces:(await inspect(p,changed)).surfaces},p);assert.ok(diffLockfiles(a,b).changes.some(c=>c.kind==='mcp-probe-changed'&&c.severity==='critical'));});
+test('requireMcpInspection escalates inspection failure to error',async()=>{const r=await inspect(mergePolicy({requireMcpInspection:true,inspectMcpPrimitives:false}),server({byCall:b=>b.method==='server/discover'?{url:endpoint,status:500,body:'bad'}:undefined}));assert.ok(r.findings.some(f=>f.ruleId==='mcp/server-discover'&&f.severity==='error'));});

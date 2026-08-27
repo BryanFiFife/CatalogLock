@@ -1,0 +1,11 @@
+{
+  "entries": [
+    {
+      "identifier": "urn:air:example.com:catalog:partner",
+      "displayName": "Partner Entry Source",
+      "type": "application/ai-catalog+json",
+      "url": "https://partner.example.com/.well-known/ard.json",
+      "representativeQueries": ["find partner agents", "discover partner tools"]
+    }
+  ]
+}

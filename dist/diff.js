@@ -1,5 +1,13 @@
 import { severityRank } from './policy.js';
-const order = ['info', 'warning', 'error', 'critical'];
+import { canonicalJson, sha256 } from './canonical.js';
+const severityOrder = ['info', 'warning', 'error', 'critical'];
+const trustRank = {
+    invalid: 0,
+    absent: 1,
+    unsupported: 2,
+    'present-unverified': 3,
+    verified: 4
+};
 function entryMap(lock) {
     const map = new Map();
     for (const c of lock.catalogs)
@@ -7,116 +15,146 @@ function entryMap(lock) {
             map.set(e.identifier, { catalog: c.url, entry: e });
     return map;
 }
+function surfaceKey(s) {
+    return typeof s.surfaceId === 'string' && s.surfaceId ? s.surfaceId : `${s.identifier}#legacy`;
+}
 function surfaceMap(lock) {
-    return new Map((lock.mcpSurfaces ?? []).map((s) => [s.identifier, s]));
+    return new Map((lock.mcpSurfaces ?? []).map(s => [surfaceKey(s), s]));
+}
+function add(changes, kind, severity, identifier, message, before, after) {
+    changes.push({ kind, severity, identifier, message, ...(before !== undefined ? { before } : {}), ...(after !== undefined ? { after } : {}) });
+}
+function itemMap(c) {
+    return new Map((c?.items ?? []).map(i => [i.key, i]));
+}
+function diffCache(changes, id, label, before, after) {
+    if (!before || !after || before.cacheSha256 === after.cacheSha256)
+        return;
+    const privateBefore = before.caches.some(c => c.cacheScope === 'private');
+    const publicAfter = after.caches.some(c => c.cacheScope === 'public');
+    if (privateBefore && publicAfter) {
+        add(changes, 'mcp-cache-scope-widened', 'critical', id, `${label} cache scope widened from private to public on ${id}`, before.caches, after.caches);
+    }
+    else {
+        add(changes, 'mcp-cache-changed', 'warning', id, `${label} cache policy changed on ${id}`, before.caches, after.caches);
+    }
+}
+function diffCollection(changes, surfaceId, label, before, after, kinds) {
+    if (!before && !after)
+        return;
+    if (!before && after) {
+        for (const item of after.items)
+            add(changes, kinds[0], 'critical', `${surfaceId}#${item.key}`, `New MCP ${label} appeared: ${item.key} on ${surfaceId}`, undefined, item);
+        return;
+    }
+    if (before && !after) {
+        for (const item of before.items)
+            add(changes, kinds[1], 'warning', `${surfaceId}#${item.key}`, `MCP ${label} disappeared: ${item.key} on ${surfaceId}`, item);
+        return;
+    }
+    const b = itemMap(before), a = itemMap(after);
+    for (const key of [...a.keys()].filter(k => !b.has(k)).sort())
+        add(changes, kinds[0], 'critical', `${surfaceId}#${key}`, `New MCP ${label} appeared: ${key} on ${surfaceId}`, undefined, a.get(key));
+    for (const key of [...b.keys()].filter(k => !a.has(k)).sort())
+        add(changes, kinds[1], 'warning', `${surfaceId}#${key}`, `MCP ${label} disappeared: ${key} on ${surfaceId}`, b.get(key));
+    for (const key of [...a.keys()].filter(k => b.has(k)).sort()) {
+        const old = b.get(key), cur = a.get(key);
+        if (old.sha256 !== cur.sha256)
+            add(changes, kinds[2], 'critical', `${surfaceId}#${key}`, `MCP ${label} definition changed: ${key} on ${surfaceId}`, old, cur);
+    }
+    diffCache(changes, surfaceId, `MCP ${label} list`, before, after);
+}
+function probeMap(s) {
+    return new Map((s.probes ?? []).map(p => [`${p.method}\0${p.key}`, p]));
+}
+function countKinds(changes) {
+    const out = { highestSeverity: 'info' };
+    for (const c of changes) {
+        out[c.kind] = Number(out[c.kind] ?? 0) + 1;
+        if (severityRank(c.severity) > severityRank(out.highestSeverity))
+            out.highestSeverity = c.severity;
+    }
+    return out;
 }
 export function diffLockfiles(before, after) {
     const changes = [];
     if (before.root !== after.root)
-        changes.push({ kind: 'root-changed', severity: 'critical', identifier: after.root, message: `Root catalog changed from ${before.root} to ${after.root}`, before: before.root, after: after.root });
+        add(changes, 'root-changed', 'critical', after.root, `Root entry source changed from ${before.root} to ${after.root}`, before.root, after.root);
+    if (before.rootSourceKind !== after.rootSourceKind)
+        add(changes, 'root-source-changed', 'error', after.root, 'ARD root discovery source changed', before.rootSourceKind, after.rootSourceKind);
+    if (before.ardContextSha256 !== after.ardContextSha256)
+        add(changes, 'ard-context-changed', 'critical', 'ard-context', 'Effective ARD base context changed', before.ardContextSha256, after.ardContextSha256);
     if (before.policySha256 !== after.policySha256)
-        changes.push({ kind: 'policy-changed', severity: 'error', identifier: 'policy', message: 'Effective CatalogLock policy changed', before: before.policySha256, after: after.policySha256 });
-    const bc = new Map(before.catalogs.map((c) => [c.url, c]));
-    const ac = new Map(after.catalogs.map((c) => [c.url, c]));
-    for (const c of [...ac.keys()].filter((x) => !bc.has(x)).sort())
-        changes.push({ kind: 'catalog-added', severity: 'error', identifier: c, message: `New catalog authority entered the graph: ${c}` });
-    for (const c of [...bc.keys()].filter((x) => !ac.has(x)).sort())
-        changes.push({ kind: 'catalog-removed', severity: 'warning', identifier: c, message: `Catalog removed from graph: ${c}` });
-    for (const c of [...ac.keys()].filter((x) => bc.has(x)).sort()) {
-        const old = bc.get(c);
-        const cur = ac.get(c);
+        add(changes, 'policy-changed', 'error', 'policy', 'Effective CatalogLock policy changed', before.policySha256, after.policySha256);
+    const bc = new Map(before.catalogs.map(c => [c.url, c]));
+    const ac = new Map(after.catalogs.map(c => [c.url, c]));
+    for (const c of [...ac.keys()].filter(x => !bc.has(x)).sort())
+        add(changes, 'catalog-added', 'error', c, `New entry-source authority entered the graph: ${c}`, undefined, ac.get(c));
+    for (const c of [...bc.keys()].filter(x => !ac.has(x)).sort())
+        add(changes, 'catalog-removed', 'warning', c, `Entry source removed from graph: ${c}`, bc.get(c));
+    for (const c of [...ac.keys()].filter(x => bc.has(x)).sort()) {
+        const old = bc.get(c), cur = ac.get(c);
         if (old.sha256 !== cur.sha256)
-            changes.push({ kind: 'catalog-changed', severity: 'error', identifier: c, message: `Catalog content changed: ${c}`, before: old.sha256, after: cur.sha256 });
+            add(changes, 'catalog-changed', 'error', c, `Entry-source content changed: ${c}`, old.sha256, cur.sha256);
     }
-    const b = entryMap(before);
-    const a = entryMap(after);
-    for (const id of [...a.keys()].filter((x) => !b.has(x)).sort())
-        changes.push({ kind: 'resource-added', severity: 'warning', identifier: id, message: `Resource added: ${id}`, after: a.get(id) });
-    for (const id of [...b.keys()].filter((x) => !a.has(x)).sort())
-        changes.push({ kind: 'resource-removed', severity: 'warning', identifier: id, message: `Resource removed: ${id}`, before: b.get(id) });
-    for (const id of [...a.keys()].filter((x) => b.has(x)).sort()) {
-        const old = b.get(id);
-        const cur = a.get(id);
-        const authorityChanged = old.entry.publisher !== cur.entry.publisher || old.catalog !== cur.catalog || old.entry.trustScore !== cur.entry.trustScore || old.entry.signaturePresent !== cur.entry.signaturePresent;
+    const b = entryMap(before), a = entryMap(after);
+    for (const id of [...a.keys()].filter(x => !b.has(x)).sort())
+        add(changes, 'resource-added', 'warning', id, `Resource added: ${id}`, undefined, a.get(id));
+    for (const id of [...b.keys()].filter(x => !a.has(x)).sort())
+        add(changes, 'resource-removed', 'warning', id, `Resource removed: ${id}`, b.get(id));
+    for (const id of [...a.keys()].filter(x => b.has(x)).sort()) {
+        const old = b.get(id), cur = a.get(id);
+        const authorityChanged = old.entry.publisher !== cur.entry.publisher || old.catalog !== cur.catalog;
         if (authorityChanged)
-            changes.push({ kind: 'authority-changed', severity: 'critical', identifier: id, message: `Trust/authority changed for ${id}`, before: old, after: cur });
-        else if (old.entry.entrySha256 !== cur.entry.entrySha256)
-            changes.push({ kind: 'resource-changed', severity: 'error', identifier: id, message: `Resource definition changed: ${id}`, before: old.entry, after: cur.entry });
+            add(changes, 'authority-changed', 'critical', id, `Publisher/source authority changed for ${id}`, old, cur);
+        if (old.entry.entrySha256 !== cur.entry.entrySha256)
+            add(changes, 'resource-changed', 'error', id, `Resource definition changed: ${id}`, old.entry, cur.entry);
+        const os = old.entry.trustState ?? 'absent', cs = cur.entry.trustState ?? 'absent';
+        if (os !== cs || old.entry.trustEvidenceSha256 !== cur.entry.trustEvidenceSha256) {
+            const regressed = trustRank[cs] < trustRank[os] || cs === 'invalid';
+            add(changes, regressed ? 'trust-regressed' : 'trust-changed', regressed ? 'critical' : 'error', id, regressed ? `Verified/trust posture regressed for ${id}: ${os} -> ${cs}` : `Trust posture changed for ${id}: ${os} -> ${cs}`, { state: os, evidence: old.entry.trustEvidenceSha256 }, { state: cs, evidence: cur.entry.trustEvidenceSha256 });
+        }
     }
-    const bs = surfaceMap(before);
-    const as = surfaceMap(after);
-    for (const id of [...as.keys()].filter((x) => !bs.has(x)).sort()) {
-        changes.push({ kind: 'mcp-surface-added', severity: 'warning', identifier: id, message: `MCP tool surface is now locked: ${id}`, after: as.get(id) });
-    }
-    for (const id of [...bs.keys()].filter((x) => !as.has(x)).sort()) {
-        changes.push({ kind: 'mcp-surface-removed', severity: 'error', identifier: id, message: `MCP tool surface is no longer observable: ${id}`, before: bs.get(id) });
-    }
-    for (const id of [...as.keys()].filter((x) => bs.has(x)).sort()) {
-        const old = bs.get(id);
-        const cur = as.get(id);
-        if (old.cardSha256 !== cur.cardSha256) {
-            changes.push({ kind: 'mcp-card-changed', severity: 'error', identifier: id, message: `MCP Server Card changed for ${id}`, before: old.cardSha256, after: cur.cardSha256 });
+    const bs = surfaceMap(before), as = surfaceMap(after);
+    for (const id of [...as.keys()].filter(x => !bs.has(x)).sort())
+        add(changes, 'mcp-surface-added', 'error', id, `New contextual MCP surface appeared: ${id}`, undefined, as.get(id));
+    for (const id of [...bs.keys()].filter(x => !as.has(x)).sort())
+        add(changes, 'mcp-surface-removed', 'error', id, `MCP surface is no longer observable: ${id}`, bs.get(id));
+    for (const id of [...as.keys()].filter(x => bs.has(x)).sort()) {
+        const old = bs.get(id), cur = as.get(id);
+        if (old.cardSha256 !== cur.cardSha256)
+            add(changes, 'mcp-card-changed', 'error', id, `MCP Server Card changed for ${id}`, old.cardSha256, cur.cardSha256);
+        if (old.endpoint !== cur.endpoint)
+            add(changes, 'mcp-endpoint-changed', 'critical', id, `MCP endpoint changed for ${id}`, old.endpoint, cur.endpoint);
+        if (old.profileSha256 !== cur.profileSha256)
+            add(changes, 'mcp-profile-changed', 'critical', id, `MCP inspection profile/capabilities changed for ${id}`, old.profileSha256, cur.profileSha256);
+        if (old.discover?.sha256 !== cur.discover?.sha256)
+            add(changes, 'mcp-discover-changed', 'critical', id, `MCP server/discover surface changed for ${id}`, old.discover, cur.discover);
+        if (old.discover && cur.discover && old.discover.cache.cacheScope === 'private' && cur.discover.cache.cacheScope === 'public') {
+            add(changes, 'mcp-cache-scope-widened', 'critical', id, `server/discover cache scope widened from private to public on ${id}`, old.discover.cache, cur.discover.cache);
         }
-        if (old.endpoint !== cur.endpoint) {
-            changes.push({ kind: 'mcp-endpoint-changed', severity: 'critical', identifier: id, message: `MCP endpoint changed for ${id}`, before: old.endpoint, after: cur.endpoint });
+        else if (old.discover && cur.discover && canonicalJson(old.discover.cache) !== canonicalJson(cur.discover.cache)) {
+            add(changes, 'mcp-cache-changed', 'warning', id, `server/discover cache policy changed on ${id}`, old.discover.cache, cur.discover.cache);
         }
-        const oldTools = new Map(old.tools.map((t) => [t.name, t]));
-        const curTools = new Map(cur.tools.map((t) => [t.name, t]));
-        for (const name of [...curTools.keys()].filter((x) => !oldTools.has(x)).sort()) {
-            changes.push({
-                kind: 'mcp-tool-added',
-                severity: 'critical',
-                identifier: `${id}#${name}`,
-                message: `New executable MCP tool appeared: ${name} on ${id}`,
-                after: curTools.get(name)
-            });
-        }
-        for (const name of [...oldTools.keys()].filter((x) => !curTools.has(x)).sort()) {
-            changes.push({
-                kind: 'mcp-tool-removed',
-                severity: 'warning',
-                identifier: `${id}#${name}`,
-                message: `MCP tool disappeared: ${name} on ${id}`,
-                before: oldTools.get(name)
-            });
-        }
-        for (const name of [...curTools.keys()].filter((x) => oldTools.has(x)).sort()) {
-            const oldTool = oldTools.get(name);
-            const curTool = curTools.get(name);
-            if (oldTool.toolSha256 !== curTool.toolSha256) {
-                changes.push({
-                    kind: 'mcp-tool-changed',
-                    severity: 'critical',
-                    identifier: `${id}#${name}`,
-                    message: `MCP tool definition/schema changed: ${name} on ${id}`,
-                    before: oldTool,
-                    after: curTool
-                });
+        diffCollection(changes, id, 'tool', old.tools, cur.tools, ['mcp-tool-added', 'mcp-tool-removed', 'mcp-tool-changed']);
+        diffCollection(changes, id, 'prompt', old.prompts, cur.prompts, ['mcp-prompt-added', 'mcp-prompt-removed', 'mcp-prompt-changed']);
+        diffCollection(changes, id, 'resource', old.resources, cur.resources, ['mcp-resource-added', 'mcp-resource-removed', 'mcp-resource-changed']);
+        diffCollection(changes, id, 'resource template', old.resourceTemplates, cur.resourceTemplates, ['mcp-resource-template-added', 'mcp-resource-template-removed', 'mcp-resource-template-changed']);
+        const bp = probeMap(old), ap = probeMap(cur);
+        for (const k of [...ap.keys()].filter(x => !bp.has(x)).sort())
+            add(changes, 'mcp-probe-added', 'critical', `${id}#probe:${k}`, `New read-only MCP probe surface appeared on ${id}: ${k}`, undefined, ap.get(k));
+        for (const k of [...bp.keys()].filter(x => !ap.has(x)).sort())
+            add(changes, 'mcp-probe-removed', 'warning', `${id}#probe:${k}`, `Read-only MCP probe surface disappeared on ${id}: ${k}`, bp.get(k));
+        for (const k of [...ap.keys()].filter(x => bp.has(x)).sort()) {
+            const oldP = bp.get(k), curP = ap.get(k);
+            if (oldP.sha256 !== curP.sha256 || sha256(canonicalJson(oldP.cache ?? null)) !== sha256(canonicalJson(curP.cache ?? null))) {
+                add(changes, 'mcp-probe-changed', 'critical', `${id}#probe:${k}`, `Read-only MCP probe result changed on ${id}: ${k}`, oldP, curP);
             }
         }
     }
+    changes.sort((x, y) => `${severityRank(y.severity)}:${x.kind}:${x.identifier}:${x.message}`.localeCompare(`${severityRank(x.severity)}:${y.kind}:${y.identifier}:${y.message}`));
     const highest = changes.reduce((s, c) => severityRank(c.severity) > severityRank(s) ? c.severity : s, 'info');
-    return {
-        changed: changes.length > 0,
-        changes,
-        blastRadius: {
-            addedCatalogs: changes.filter((c) => c.kind === 'catalog-added').length,
-            removedCatalogs: changes.filter((c) => c.kind === 'catalog-removed').length,
-            changedCatalogs: changes.filter((c) => c.kind === 'catalog-changed').length,
-            policyChanges: changes.filter((c) => c.kind === 'policy-changed').length,
-            rootChanges: changes.filter((c) => c.kind === 'root-changed').length,
-            addedResources: changes.filter((c) => c.kind === 'resource-added').length,
-            removedResources: changes.filter((c) => c.kind === 'resource-removed').length,
-            changedResources: changes.filter((c) => c.kind === 'resource-changed').length,
-            authorityChanges: changes.filter((c) => c.kind === 'authority-changed').length,
-            addedMcpSurfaces: changes.filter((c) => c.kind === 'mcp-surface-added').length,
-            removedMcpSurfaces: changes.filter((c) => c.kind === 'mcp-surface-removed').length,
-            changedMcpCards: changes.filter((c) => c.kind === 'mcp-card-changed').length,
-            changedMcpEndpoints: changes.filter((c) => c.kind === 'mcp-endpoint-changed').length,
-            addedMcpTools: changes.filter((c) => c.kind === 'mcp-tool-added').length,
-            removedMcpTools: changes.filter((c) => c.kind === 'mcp-tool-removed').length,
-            changedMcpTools: changes.filter((c) => c.kind === 'mcp-tool-changed').length,
-            highestSeverity: order[Math.max(0, severityRank(highest))]
-        }
-    };
+    const blastRadius = countKinds(changes);
+    blastRadius.highestSeverity = severityOrder[Math.max(0, severityRank(highest))];
+    return { changed: changes.length > 0, changes, blastRadius };
 }

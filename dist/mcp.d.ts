@@ -6,6 +6,7 @@ export interface McpInspectOptions {
     fetcher?: McpCardFetcher;
     requester?: McpRequester;
     addressResolver?: AddressResolver;
+    env?: Record<string, string | undefined>;
 }
 export declare function inspectMcpSurfaces(result: ResolveResult, policy: Policy, options?: McpInspectOptions): Promise<{
     surfaces: McpSurfaceSnapshot[];

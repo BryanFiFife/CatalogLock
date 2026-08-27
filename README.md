@@ -2,194 +2,219 @@
 
 # 🔒 CatalogLock
 
-### **Lock the agentic supply chain before your agent connects to it.**
+### **Pin what an agent can discover, trust, and consume before it connects.**
 
 [![CI](https://github.com/BryanFiFife/CatalogLock/actions/workflows/ci.yml/badge.svg)](https://github.com/BryanFiFife/CatalogLock/actions/workflows/ci.yml)
+[![Conformance](https://github.com/BryanFiFife/CatalogLock/actions/workflows/conformance.yml/badge.svg)](https://github.com/BryanFiFife/CatalogLock/actions/workflows/conformance.yml)
 [![Release](https://img.shields.io/github/v/release/BryanFiFife/CatalogLock?display_name=tag&sort=semver)](https://github.com/BryanFiFife/CatalogLock/releases/latest)
-[![Node 20+](https://img.shields.io/badge/node-%3E%3D20-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node](https://img.shields.io/badge/node-20%20%7C%2022%20%7C%2024-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-7c3aed)](LICENSE)
 [![Runtime deps](https://img.shields.io/badge/runtime%20dependencies-0-00b894)](#security-model)
-[![Tests](https://img.shields.io/badge/tests-54%2F54%20passing-00b894)](#security-model)
-[![Lockfile](https://img.shields.io/badge/lockfile-v2-6d5dfc)](#deterministic-lockfiles)
-[![ARD](https://img.shields.io/badge/ARD-v0.91%20proposal-4f46e5)](https://agenticresourcediscovery.org/spec/)
+[![Tests](https://img.shields.io/badge/tests-135%2F135%20passing-00b894)](#verification)
+[![Lockfile](https://img.shields.io/badge/lockfile-v3-6d5dfc)](#deterministic-lockfiles)
+[![ARD](https://img.shields.io/badge/ARD-v0.91-4f46e5)](https://agenticresourcediscovery.org/spec/)
 [![MCP](https://img.shields.io/badge/MCP-2026--07--28-2563eb)](https://modelcontextprotocol.io/)
-[![Tool drift](https://img.shields.io/badge/MCP%20tool%20drift-locked-e11d48)](#live-mcp-tool-surface-locking)
+[![Trust](https://img.shields.io/badge/trust-evidence%20verified-00b894)](#trust-and-provenance)
 [![SARIF](https://img.shields.io/badge/output-SARIF%202.1.0-2563eb)](#outputs)
 
-**ARD / ai-catalog security · recursive resolution · SSRF resistance · trust graph · deterministic lockfile · live MCP `tools/list` locking · blast-radius diff · SARIF · GitHub Action**
+**Stable identity is not stable capability. Stable capability is not stable implementation. CatalogLock makes each distinction explicit.**
 
 </div>
 
 ---
 
-Agentic Resource Discovery (ARD) gives agents a web-scale discovery layer for MCP servers, A2A agents, skills and APIs. Discovery is powerful precisely because catalogs are **remote, recursive and machine-consumed**. That also makes the catalog graph a supply-chain boundary.
+CatalogLock is a deterministic pre-connect security gate for Agentic Resource Discovery (ARD) and Model Context Protocol (MCP) infrastructure. It resolves ARD entry sources under a strict outbound-network policy, assesses authority and trust evidence, snapshots MCP protocol surfaces under explicit client/authentication profiles, and freezes the reviewed state into a lockfile that CI can diff later.
 
-**CatalogLock is the pre-connect gate.** It resolves an ARD catalog graph under strict network limits, checks whether identifiers and trust identities line up with the domains claiming them, freezes the reviewed graph into a deterministic lockfile, and now goes one layer deeper for MCP: it can lock the **actual runtime tool surface** returned by `tools/list`.
+CatalogLock does **not** execute discovered tools and does **not** claim that metadata, schemas, signatures, attestations, or provenance prove runtime behavior. It records and verifies what can be verified, and keeps the remaining uncertainty visible.
 
-> `retrieval ≠ trust`, `discovery ≠ authorization`, and `stable identity ≠ stable capability`.
+## What v0.3.0 locks
 
-## Why this exists
+### ARD v0.91
 
-A catalog entry can look harmless while changing the authority your agent ultimately reaches. A nested catalog can point at internal infrastructure. A publisher identifier can claim one domain while being served by another. A dependency can quietly drift between reviews.
+- `/.well-known/ard.json` is the canonical publisher path.
+- `/.well-known/ai-catalog.json` is supported only as an explicit predecessor fallback.
+- HTML `rel="ard"` discovery is supported.
+- ARD v0.91 entry manifests, value-or-reference delivery, `urn:air` identifiers and JSON-LD extension context are validated.
+- recursive entry sources are bounded by depth and count.
+- identifier collisions across entry sources are critical.
 
-And even when all of that stays identical, an MCP server can keep the same identity and endpoint while a new executable tool quietly appears.
+### MCP 2026-07-28
 
-CatalogLock v0.2 turns that exact failure mode into an explicit, reviewable diff.
+> **Published SDK compatibility boundary:** the npm-published `@modelcontextprotocol/server@2.0.0` package currently advertises protocol support only through `2025-11-25`. CatalogLock therefore does not claim that package as a 2026-07-28 peer. Release gating uses the current official SDK source pinned by commit for positive 2026-07-28 interoperability, and separately verifies that older published peers fail closed with an accurate protocol-version diagnostic.
+
+For every concrete Streamable HTTP remote and every configured scan profile, CatalogLock can lock:
+
+- `server/discover`
+  - supported protocol versions
+  - server capabilities
+  - extension declarations
+  - server instructions
+  - server identity metadata
+  - cache hints
+- `tools/list`
+- `prompts/list`
+- `resources/list`
+- `resources/templates/list`
+- optional `prompts/get` content probes
+- optional `resources/read` content probes
+- explicit custom **read-only** extension probes
+
+Every modern MCP request carries the 2026-07-28 per-request envelope and required Streamable HTTP routing headers. Results are checked for JSON-RPC identity, `resultType`, modern cache hints where required, pagination safety and deterministic item identity.
+
+`tools/call` is deliberately forbidden as a CatalogLock probe.
+
+## The drift case that matters
+
+Reviewed state:
 
 ```text
-open web
-   │
-   ▼
-/.well-known/ai-catalog.json
-   │
-   ▼
-┌────────────────────────────────────┐
-│             CatalogLock            │
-│  URL gate + DNS pinning            │
-│  bounded recursive resolver        │
-│  schema + authority checks         │
-│  MCP Server Card resolution        │
-│  live tools/list surface snapshot  │
-│  deterministic lockfile            │
-└─────────────────┬──────────────────┘
-                  │
-           ┌──────┴──────┐
-           ▼             ▼
-         allow         fail CI
-           │
-           ▼
-      MCP / A2A / API
+get_invoice
+search_invoices
 ```
+
+Later, with the same publisher, identifier, Server Card and endpoint:
+
+```text
+get_invoice
+search_invoices
+delete_invoice
+```
+
+CatalogLock classifies that as critical drift:
+
+```text
+[CRITICAL] mcp-tool-added:
+New executable/consumable MCP tool appeared: delete_invoice
+```
+
+The same treatment applies to changed tool schemas, newly appearing prompts/resources/templates, endpoint drift, capability/extension drift, cache-scope widening and configured read-only content probes.
+
+## Contextual surfaces
+
+MCP surfaces can differ by authentication scope, tenant or declared client capability. CatalogLock therefore treats the client context as part of the lock.
+
+```json
+{
+  "mcpProfiles": [
+    {
+      "name": "public",
+      "clientCapabilities": {}
+    },
+    {
+      "name": "finance-admin",
+      "clientCapabilities": { "sampling": {} },
+      "headersFromEnv": {
+        "Authorization": "MCP_FINANCE_TOKEN"
+      }
+    }
+  ]
+}
+```
+
+Only the **environment-variable name** enters policy/lock hashing. The credential value is injected at runtime and is never persisted in CatalogLock findings, lockfiles or reports.
+
+## Trust and provenance
+
+CatalogLock separates trust evidence into explicit states:
+
+- `absent`
+- `verified`
+- `present-unverified`
+- `unsupported`
+- `invalid`
+
+Built-in verification includes:
+
+- authority-aligned HTTPS / `did:web` / SPIFFE identity checks
+- SHA-256 verification for remote attestation/provenance evidence
+- canonical detached/compact JWS verification when the trust framework explicitly declares the CatalogLock canonical-JWS method
+- authority-resolved JWKS or `did:web` verification keys
+- pluggable trust-framework verifiers for formats the core intentionally does not pretend to understand
+
+`requireVerifiedTrust` converts unresolved declared evidence into a policy failure.
+
+Implementation provenance can reduce the gap between declared capability and deployed code, but CatalogLock does not make the false claim that a digest or attestation proves runtime behavior. It proves only the evidence relationship it actually verifies.
+
+## Deterministic lockfiles
+
+Lockfile v3 covers:
+
+- ARD context and root entry source
+- raw entry-source body digests
+- normalized resource definitions
+- policy fingerprint
+- authority/trust state and verified evidence digest
+- Server Card digest
+- stable remote index and endpoint
+- scan profile
+- `server/discover` surface
+- tools, prompts, resources and templates
+- cache policy
+- optional read-only/content probes
+- complete surface and graph digests
+
+No timestamps are included, so equivalent state produces equivalent lockfile bytes.
+
+## Network boundary
+
+All ARD, Server Card, trust-evidence and MCP HTTP requests pass through the same outbound policy:
+
+- HTTPS by default
+- port allowlist
+- DNS resolution before connect
+- rejection of loopback, RFC1918, link-local, carrier-grade NAT, documentation, multicast and reserved ranges
+- socket lookup pinned to an already-vetted address
+- response-size ceiling
+- timeout ceiling
+- redirect ceiling
+- POST redirects restricted to 307/308
+- embedded URL credentials forbidden
 
 ## 30-second start
-
-```bash
-npm install -g cataloglock
-
-cataloglock scan example.com
-cataloglock lock example.com --output cataloglock.lock.json
-
-# Later:
-cataloglock verify example.com --lock cataloglock.lock.json
-```
-
-Until an npm package is published, run directly from the repository:
 
 ```bash
 npm ci
 npm run build
 node dist/cli.cjs scan example.com
+node dist/cli.cjs lock example.com --output cataloglock.lock.json
+node dist/cli.cjs verify example.com --lock cataloglock.lock.json
 ```
 
-## Live MCP tool-surface locking
+## GitHub Action
 
-ARD and MCP Server Cards intentionally stop before runtime primitive enumeration. A Server Card tells a client **where** the MCP server is; it does not enumerate the tools the server exposes.
+```yaml
+- uses: BryanFiFife/CatalogLock@v0.3.0
+  with:
+    target: example.com
+    fail-on: error
+    inspect-mcp-primitives: "true"
+    inspect-mcp-discover: "true"
+```
 
-CatalogLock v0.2 follows public `application/mcp-server-card+json` entries to their Streamable HTTP endpoint and requests MCP `tools/list` using protocol revision `2026-07-28`.
+The v0.2 `inspect-mcp-tools` input remains as a compatibility alias.
 
-For every tool it records:
-
-- the tool name
-- SHA-256 of the entire canonical tool definition
-- SHA-256 of `inputSchema`, when present
-- SHA-256 of `outputSchema`, when present
-
-The complete sorted tool surface gets its own digest too.
-
-That means this drift:
+## Commands
 
 ```text
-yesterday
-  search_documents
-  get_invoice
-
-today
-  search_documents
-  get_invoice
-  delete_invoice
+cataloglock scan <target>
+cataloglock lock <target>
+cataloglock diff <old.lock.json> <new.lock.json>
+cataloglock verify <target> --lock cataloglock.lock.json
+cataloglock version
 ```
 
-becomes:
+Important switches:
 
 ```text
-[CRITICAL] mcp-tool-added:
-New executable MCP tool appeared: delete_invoice on urn:air:example.com:mcp:billing
+--no-mcp-primitives
+--no-mcp-tools             deprecated compatibility alias
+--no-mcp-discover
+--mcp-profile NAME[,NAME]
+--require-mcp-inspection
+--require-verified-trust
 ```
 
-The server can keep the same publisher, identifier, Server Card, URL and TLS identity. The new capability still appears in the lockfile diff.
-
-Tool definition/schema mutations are also `critical`. Removed tools are surfaced as warnings. Endpoint changes are `critical`.
-
-### Authenticated MCP servers
-
-CatalogLock never writes credentials into a lockfile. If a Server Card declares required authentication, or a public `tools/list` cannot be inspected, v0.2 records a warning and leaves that surface unlocked.
-
-For environments where incomplete MCP inspection is unacceptable:
-
-```json
-{
-  "requireMcpInspection": true
-}
-```
-
-That turns non-inspectable MCP surfaces into policy errors.
-
-Disable live inspection explicitly with:
-
-```bash
-cataloglock lock example.com --no-mcp-tools
-```
-
-## What it checks
-
-| Boundary | CatalogLock behavior |
-|---|---|
-| **Catalog location** | Uses `/.well-known/ai-catalog.json`; optionally probes early `ard.json` experiments only after canonical 404 |
-| **Transport** | HTTPS by default, port allowlist, response-byte and timeout ceilings |
-| **SSRF** | Rejects loopback, RFC1918, link-local, carrier-grade NAT, documentation, multicast and reserved ranges |
-| **DNS rebinding** | Resolves first, validates every returned address, then pins the socket lookup to a vetted address |
-| **Recursion** | Explicit catalog-count and depth bounds, cycle de-duplication |
-| **Schema** | Required catalog/entry fields, URL/data XOR, duplicate identifiers, HTTPS entry URLs |
-| **Authority** | `urn:air:<publisher>:...` must align with the catalog source host |
-| **Trust identity** | HTTPS, SPIFFE and `did:web` identities are checked against publisher authority |
-| **Attestations** | Recorded as claims, never silently promoted into proof |
-| **Signatures** | Presence is surfaced; cryptographic verification is intentionally not claimed |
-| **Catalog drift** | Lockfile comparison classifies resource, catalog and authority changes |
-| **MCP Server Cards** | Resolves current `application/mcp-server-card+json` resources without trusting them as execution proof |
-| **MCP endpoint** | Streamable HTTP endpoint changes are critical drift |
-| **MCP tools** | New tools and changed tool definitions/schemas are critical drift |
-| **MCP pagination** | Bounded page/tool counts, duplicate-name rejection and repeated-cursor detection |
-
-## Deterministic lockfiles
-
-`cataloglock lock` writes stable JSON with no timestamp noise. Lockfile v2 includes:
-
-- SHA-256 of every fetched catalog body
-- SHA-256 fingerprint of the effective policy
-- a canonical graph digest
-- normalized resource definitions
-- publisher and trust score
-- signature-presence state
-- MCP Server Card digest
-- MCP endpoint
-- canonical runtime tool hashes and schema hashes
-- findings that existed at lock time
-
-The same graph, runtime tool surface and policy produce the same lockfile bytes.
-
-## Blast-radius diff
-
-CatalogLock separates ordinary metadata drift from capability and authority drift:
-
-```text
-[WARNING]  resource-added: Resource added: urn:air:example.com:agent:planner
-[ERROR]    resource-changed: Resource definition changed: urn:air:example.com:mcp:files
-[CRITICAL] authority-changed: Trust/authority changed for urn:air:example.com:agent:payments
-[CRITICAL] mcp-tool-added: New executable MCP tool appeared: delete_file on urn:air:example.com:mcp:files
-[CRITICAL] mcp-tool-changed: MCP tool definition/schema changed: transfer_funds on urn:air:example.com:mcp:payments
-```
-
-The blast-radius summary counts catalog, resource, authority, endpoint and MCP tool-surface mutations separately.
+Exit codes: `0` clean, `1` runtime/tooling failure, `2` policy threshold reached, `3` lock drift detected.
 
 ## Outputs
 
@@ -199,83 +224,39 @@ cataloglock scan example.com --format html --output cataloglock-report.html
 cataloglock scan example.com --format sarif --output cataloglock.sarif
 ```
 
-The HTML report is self-contained. SARIF 2.1.0 can be uploaded to code-scanning systems.
-
-## GitHub Action
-
-```yaml
-name: Catalog security
-on: [push, pull_request]
-
-jobs:
-  cataloglock:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: BryanFiFife/CatalogLock@v0.2.0
-        with:
-          target: example.com
-          fail-on: error
-          inspect-mcp-tools: "true"
-      - uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: cataloglock.sarif
-```
+The HTML report is self-contained. SARIF output is SARIF 2.1.0.
 
 ## Security model
 
-CatalogLock has **zero runtime npm dependencies**. The network resolver and MCP HTTP requester use Node core so the most sensitive boundary stays small and auditable.
+CatalogLock has **zero runtime npm dependencies**. Node core handles the security-sensitive network and cryptographic primitives.
 
-Every Server Card URL and MCP endpoint passes through the same outbound URL policy, DNS resolution, public-IP validation and socket pinning used for catalog retrieval. POST redirects are only followed for 307/308, preventing method-changing redirect surprises.
+It deliberately does not:
 
-The resolver remains fail-closed. It does not equate `SOC2-Type2`, `HIPAA`, `GDPR` or similar strings with verified compliance. It does not claim that a present signature is valid. It does not execute discovered tools and does not authorize an MCP server merely because discovery metadata or a `tools/list` snapshot passed.
+- execute discovered MCP tools
+- treat discovery as authorization
+- claim an unverified signature is proof
+- infer compliance from labels such as SOC 2, HIPAA or GDPR
+- claim that an unchanged schema means unchanged implementation behavior
+- persist authentication secret values
+- silently ignore uninspectable required MCP surfaces when fail-closed policy is enabled
 
-See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) and [docs/POLICY.md](docs/POLICY.md).
+See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md), [docs/POLICY.md](docs/POLICY.md) and [SECURITY.md](SECURITY.md).
 
-## ARD compatibility
+## Verification
 
-CatalogLock tracks the current ARD proposal, including domain-anchored `urn:air` identifiers and `application/mcp-server-card+json` entries. The README badge tracks ARD v0.91 as published on 26 August 2026.
+The v0.3.0 release gate includes:
 
-`/.well-known/ard.json` remains a compatibility probe for early implementations and generates a warning when used.
-
-## Commands
-
-```text
-cataloglock scan <target>      resolve + assess + inspect MCP + report
-cataloglock lock <target>      produce deterministic lockfile v2
-cataloglock diff <old> <new>   calculate blast radius
-cataloglock verify <target>    resolve live graph/tool surface and compare to a lock
-cataloglock version            print version
-```
-
-Exit codes: `0` clean, `1` tool/runtime failure, `2` policy finding threshold reached, `3` lock drift detected.
-
-## Roadmap
-
-- authenticated MCP inspection without ever persisting secret material
-- cryptographic verification for supported JWS / DID Web trust manifests
-- signed lockfiles and transparency-log anchoring
-- registry ingestion mode for fleet-scale scanning
-- policy packs for enterprise MCP/A2A environments
-
-## Contributing
-
-Security pull requests are welcome. Resolver and MCP-introspection changes should arrive with adversarial tests. See [CONTRIBUTING.md](CONTRIBUTING.md).
+- 135 adversarial/unit/end-to-end tests
+- Node 20, 22 and 24
+- TypeScript typecheck
+- production build reproducibility
+- package-content leak inspection
+- tracked-tree leak inspection
+- `npm audit --audit-level=high`
+- official ARD v0.91 conformance CLI against the shipped good example
+- positive MCP 2026-07-28 interoperability against the current official TypeScript SDK source pinned to an immutable upstream commit, plus an explicit published-SDK compatibility-boundary check
+- release-asset SHA-256 verification after publication
 
 ## License
 
 Apache-2.0.
-
----
-
-<div align="center">
-
-**Stable identity is not stable capability. Lock both.**
-
-⭐ Star the repo if you want agent discovery to become reviewable infrastructure instead of blind runtime trust.
-
-</div>

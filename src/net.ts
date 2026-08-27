@@ -112,7 +112,7 @@ async function requestPinned(url: URL, address: string, policy: Policy, options:
       method: options.method,
       headers: {
         accept: 'application/json, application/ai-catalog+json;q=0.9, application/mcp-server-card+json;q=0.9, text/event-stream;q=0.8, */*;q=0.1',
-        'user-agent': 'CatalogLock/0.2 (+https://github.com/BryanFiFife/CatalogLock)',
+        'user-agent': 'CatalogLock/0.3 (+https://github.com/BryanFiFife/CatalogLock)',
         ...(options.body ? { 'content-length': String(Buffer.byteLength(options.body)) } : {}),
         ...(options.headers ?? {})
       },
@@ -135,13 +135,18 @@ async function requestPinned(url: URL, address: string, policy: Policy, options:
         }
         chunks.push(chunk);
       });
-      res.on('end', () => resolve({
-        url: url.toString(),
-        status: res.statusCode ?? 0,
-        body: Buffer.concat(chunks).toString('utf8'),
-        ...(typeof res.headers['content-type'] === 'string' ? { contentType: res.headers['content-type'] } : {}),
-        ...(typeof res.headers.location === 'string' ? { location: res.headers.location } : {})
-      }));
+      res.on('end', () => {
+        const data = Buffer.concat(chunks);
+        resolve({
+          url: url.toString(),
+          status: res.statusCode ?? 0,
+          body: data.toString('utf8'),
+          bodyBytes: data,
+          ...(typeof res.headers['content-type'] === 'string' ? { contentType: res.headers['content-type'] } : {}),
+          ...(typeof res.headers.location === 'string' ? { location: res.headers.location } : {}),
+          headers: Object.fromEntries(Object.entries(res.headers).flatMap(([k,v]) => typeof v === 'string' ? [[k.toLowerCase(),v]] : Array.isArray(v) ? [[k.toLowerCase(),v.join(', ')]] : []))
+        });
+      });
     });
     req.on('timeout', () => req.destroy(new Error(`request timed out after ${policy.timeoutMs}ms`)));
     req.on('error', reject);
@@ -207,8 +212,8 @@ export function targetToCandidateUrls(target: string, policy: Policy): string[] 
   } else {
     base = validateOutboundUrl(`https://${target}`, policy);
   }
-  const canonical = new URL('/.well-known/ai-catalog.json', base).toString();
-  const candidates = [canonical];
-  if (policy.allowCompatibilityArdJson) candidates.push(new URL('/.well-known/ard.json', base).toString());
+  const ard = new URL('/.well-known/ard.json', base).toString();
+  const candidates = [ard];
+  if (policy.allowCompatibilityAiCatalogJson) candidates.push(new URL('/.well-known/ai-catalog.json', base).toString());
   return candidates;
 }

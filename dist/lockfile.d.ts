@@ -1,5 +1,5 @@
 import type { CatalogLockfile, Policy, ResolveResult } from './types.js';
-export declare const VERSION = "0.2.0";
+export declare const VERSION = "0.3.0";
 export declare function createLockfile(result: ResolveResult & {
     mcpSurfaces?: CatalogLockfile['mcpSurfaces'];
 }, policy: Policy): CatalogLockfile;

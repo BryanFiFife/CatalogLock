@@ -24,8 +24,12 @@ async function run() {
     if (policyPath)
         partial = JSON.parse(await fs.readFile(policyPath, 'utf8'));
     const failOn = (input('fail-on', partial.failOn ?? 'error'));
-    const inspectMcpTools = input('inspect-mcp-tools', String(partial.inspectMcpTools ?? true)).toLowerCase() !== 'false';
-    const policy = mergePolicy({ ...partial, failOn, inspectMcpTools });
+    const primitiveFallback = partial.inspectMcpPrimitives ?? partial.inspectMcpTools ?? true;
+    const inspectMcpPrimitives = input('inspect-mcp-primitives', String(primitiveFallback)).toLowerCase() !== 'false';
+    const inspectMcpDiscover = input('inspect-mcp-discover', String(partial.inspectMcpDiscover ?? true)).toLowerCase() !== 'false';
+    const legacyTools = input('inspect-mcp-tools', '').trim();
+    const effectivePrimitives = legacyTools ? legacyTools.toLowerCase() !== 'false' : inspectMcpPrimitives;
+    const policy = mergePolicy({ ...partial, failOn, inspectMcpPrimitives: effectivePrimitives, inspectMcpDiscover });
     const { result } = await auditCatalog(target, { policy });
     const lock = createLockfile(result, policy);
     const lockfile = input('lockfile', 'cataloglock.lock.json');
@@ -35,16 +39,20 @@ async function run() {
     const html = input('html', 'cataloglock-report.html');
     await fs.writeFile(html, htmlReport(result));
     const highest = result.findings.reduce((s, f) => severityRank(f.severity) > severityRank(s) ? f.severity : s, 'info');
+    const count = (key) => result.mcpSurfaces.reduce((n, s) => n + (s[key]?.items.length ?? 0), 0);
     await output('highest-severity', highest);
     await output('findings', String(result.findings.length));
     await output('catalogs', String(result.catalogs.length));
     await output('mcp-surfaces', String(result.mcpSurfaces.length));
-    await output('mcp-tools', String(result.mcpSurfaces.reduce((n, s) => n + s.tools.length, 0)));
+    await output('mcp-tools', String(count('tools')));
+    await output('mcp-prompts', String(count('prompts')));
+    await output('mcp-resources', String(count('resources')));
+    await output('mcp-resource-templates', String(count('resourceTemplates')));
     for (const f of result.findings)
         command(f.severity === 'info' ? 'notice' : f.severity === 'warning' ? 'warning' : 'error', `${f.ruleId}: ${f.message}${f.location ? ` (${f.location})` : ''}`);
-    if (result.findings.some((f) => severityRank(f.severity) >= severityRank(policy.failOn))) {
+    if (result.findings.some(f => severityRank(f.severity) >= severityRank(policy.failOn))) {
         command('error', `CatalogLock policy gate failed at threshold ${policy.failOn}`);
         process.exitCode = 2;
     }
 }
-run().catch((e) => { command('error', e instanceof Error ? e.message : String(e)); process.exitCode = 1; });
+run().catch(e => { command('error', e instanceof Error ? e.message : String(e)); process.exitCode = 1; });

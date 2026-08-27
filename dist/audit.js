@@ -6,12 +6,14 @@ export async function auditCatalog(target, options = {}) {
     const resolved = await resolveCatalogs(target, {
         policy,
         ...(options.fetcher ? { fetcher: options.fetcher } : {}),
-        ...(options.addressResolver ? { addressResolver: options.addressResolver } : {})
+        ...(options.addressResolver ? { addressResolver: options.addressResolver } : {}),
+        ...(options.trustVerifiers ? { trustVerifiers: options.trustVerifiers } : {})
     });
     const inspected = await inspectMcpSurfaces(resolved, policy, {
         ...(options.fetcher ? { fetcher: options.fetcher } : {}),
         ...(options.requester ? { requester: options.requester } : {}),
-        ...(options.addressResolver ? { addressResolver: options.addressResolver } : {})
+        ...(options.addressResolver ? { addressResolver: options.addressResolver } : {}),
+        ...(options.env ? { env: options.env } : {})
     });
     const result = {
         ...resolved,

@@ -1,20 +1,49 @@
-function isObject(v) {
-    return !!v && typeof v === 'object' && !Array.isArray(v);
+function isObject(v) { return !!v && typeof v === 'object' && !Array.isArray(v); }
+const urnAir = /^urn:air:([A-Za-z0-9.-]+)(?::[A-Za-z0-9._-]+)+$/;
+function validateContext(value, loc, findings) {
+    if (value === undefined)
+        return;
+    if (typeof value === 'string') {
+        try {
+            new URL(value);
+        }
+        catch {
+            findings.push({ ruleId: 'schema/jsonld-context', severity: 'error', message: '@context string must be a valid URI', location: loc });
+        }
+        return;
+    }
+    if (isObject(value) || Array.isArray(value))
+        return;
+    findings.push({ ruleId: 'schema/jsonld-context', severity: 'error', message: '@context must be a URI, object or array', location: loc });
+}
+function validateTrust(value, loc, findings) {
+    if (value === undefined)
+        return;
+    if (!isObject(value)) {
+        findings.push({ ruleId: 'schema/trust-manifest', severity: 'error', message: 'trustManifest must be an object', location: loc });
+        return;
+    }
+    const t = value;
+    if (typeof t.identity !== 'string' || !t.identity)
+        findings.push({ ruleId: 'schema/trust-identity', severity: 'error', message: 'trustManifest.identity is required when trustManifest is present', location: loc });
+    if (t.attestations !== undefined && (!Array.isArray(t.attestations) || t.attestations.some(a => !isObject(a))))
+        findings.push({ ruleId: 'schema/trust-attestations', severity: 'error', message: 'trustManifest.attestations must be an array of objects', location: loc });
+    if (t.provenance !== undefined && (!Array.isArray(t.provenance) || t.provenance.some(a => !isObject(a))))
+        findings.push({ ruleId: 'schema/trust-provenance', severity: 'error', message: 'trustManifest.provenance must be an array of objects', location: loc });
+    if (t.signature !== undefined && typeof t.signature !== 'string')
+        findings.push({ ruleId: 'schema/trust-signature', severity: 'error', message: 'trustManifest.signature must be a string', location: loc });
 }
 export function validateCatalog(value, location, policy) {
     const findings = [];
     if (!isObject(value))
-        return { findings: [{ ruleId: 'schema/catalog-object', severity: 'critical', message: 'Catalog must be a JSON object', location }] };
-    if (typeof value.specVersion !== 'string' || !value.specVersion.trim())
-        findings.push({ ruleId: 'schema/spec-version', severity: 'error', message: 'specVersion must be a non-empty string', location });
-    if (!isObject(value.host))
-        findings.push({ ruleId: 'schema/host', severity: 'error', message: 'host must be an object', location });
+        return { findings: [{ ruleId: 'schema/manifest-object', severity: 'critical', message: 'ARD manifest must be a JSON object', location }] };
     if (!Array.isArray(value.entries))
-        findings.push({ ruleId: 'schema/entries', severity: 'critical', message: 'entries must be an array', location });
-    if (!Array.isArray(value.entries))
-        return { findings };
+        return { findings: [{ ruleId: 'schema/entries', severity: 'critical', message: 'ARD v0.91 manifest requires an entries array', location }] };
     if (value.entries.length > policy.maxEntriesPerCatalog)
-        findings.push({ ruleId: 'limits/entry-count', severity: 'critical', message: `Catalog has ${value.entries.length} entries; policy limit is ${policy.maxEntriesPerCatalog}`, location });
+        findings.push({ ruleId: 'limits/entry-count', severity: 'critical', message: `Manifest has ${value.entries.length} entries; policy limit is ${policy.maxEntriesPerCatalog}`, location });
+    validateContext(value['@context'], `${location}#@context`, findings);
+    if ('collections' in value)
+        findings.push({ ruleId: 'compat/collections', severity: 'warning', message: 'Top-level collections is legacy and ignored by ARD v0.91', location });
     const seen = new Set();
     value.entries.forEach((raw, i) => {
         const loc = `${location}#entries/${i}`;
@@ -25,6 +54,8 @@ export function validateCatalog(value, location, policy) {
         const e = raw;
         if (typeof e.identifier !== 'string' || !e.identifier)
             findings.push({ ruleId: 'schema/identifier', severity: 'error', message: 'identifier is required', location: loc });
+        else if (!urnAir.test(e.identifier))
+            findings.push({ ruleId: 'schema/identifier', severity: 'error', message: `identifier is not a valid domain-anchored urn:air value: ${e.identifier}`, location: loc });
         else if (seen.has(e.identifier))
             findings.push({ ruleId: 'schema/duplicate-identifier', severity: 'error', message: `Duplicate identifier: ${e.identifier}`, location: loc });
         else
@@ -36,7 +67,7 @@ export function validateCatalog(value, location, policy) {
         const hasUrl = typeof e.url === 'string' && e.url.length > 0;
         const hasData = Object.prototype.hasOwnProperty.call(e, 'data');
         if (hasUrl === hasData)
-            findings.push({ ruleId: 'schema/url-xor-data', severity: 'error', message: 'Entry must have exactly one of url or data', location: loc });
+            findings.push({ ruleId: 'schema/url-xor-data', severity: 'error', message: 'Entry must provide exactly one of url or data', location: loc });
         if (hasUrl) {
             try {
                 const u = new URL(e.url);
@@ -49,11 +80,21 @@ export function validateCatalog(value, location, policy) {
                 findings.push({ ruleId: 'schema/url', severity: 'error', message: 'Entry URL is invalid', location: loc });
             }
         }
+        validateContext(e['@context'], `${loc}/@context`, findings);
+        if (typeof e['@id'] === 'string' && typeof e.identifier === 'string' && e['@id'] !== e.identifier)
+            findings.push({ ruleId: 'schema/jsonld-id-mismatch', severity: 'error', message: '@id and identifier must denote the same resource', location: loc });
         for (const key of ['tags', 'capabilities', 'representativeQueries']) {
             const v = e[key];
-            if (v !== undefined && (!Array.isArray(v) || v.some((x) => typeof x !== 'string')))
-                findings.push({ ruleId: `schema/${key}`, severity: 'warning', message: `${key} should be an array of strings`, location: loc });
+            if (v !== undefined && (!Array.isArray(v) || v.some(x => typeof x !== 'string')))
+                findings.push({ ruleId: `schema/${key}`, severity: 'error', message: `${key} must be an array of strings`, location: loc });
         }
+        if (e.representativeQueries === undefined)
+            findings.push({ ruleId: 'discovery/representative-queries', severity: 'warning', message: 'No representativeQueries; entry is valid but may not be semantically discoverable', location: loc });
+        else if (Array.isArray(e.representativeQueries) && (e.representativeQueries.length < 2 || e.representativeQueries.length > 5))
+            findings.push({ ruleId: 'discovery/representative-queries-count', severity: 'warning', message: 'ARD recommends 2 to 5 representativeQueries', location: loc });
+        if (e.metadata !== undefined && (!isObject(e.metadata) || Object.values(e.metadata).some(v => !['string', 'number', 'boolean'].includes(typeof v) && v !== null)))
+            findings.push({ ruleId: 'schema/metadata', severity: 'error', message: 'metadata values must be string, number, boolean or null', location: loc });
+        validateTrust(e.trustManifest, `${loc}/trustManifest`, findings);
     });
     return { catalog: value, findings };
 }
