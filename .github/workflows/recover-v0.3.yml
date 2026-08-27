@@ -1,0 +1,42 @@
+name: Recover v0.3 staged candidate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/recover-v0.3.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reconstruct recoverable staged payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p recovery recovered
+          cat .release/v0.3.0.part{00..10}.b64 > recovery/partial.b64
+          base64 -d recovery/partial.b64 > recovery/partial.tar.gz
+          set +e
+          gzip -dc recovery/partial.tar.gz > recovery/partial.tar
+          gzip_rc=$?
+          set -e
+          echo "gzip exit: $gzip_rc (truncation is expected)"
+          mkdir recovered/tree
+          tar -xf recovery/partial.tar -C recovered/tree --ignore-zeros --ignore-failed-read || true
+          find recovered/tree -type f -print | sort > recovered/files.txt
+          sha256sum .release/v0.3.0.part{00..10}.b64 > recovered/staged-parts.sha256
+          cp recovery/partial.tar recovered/partial.tar
+          echo "Recovered files:"
+          cat recovered/files.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cataloglock-v0.3-partial-recovery
+          path: recovered
+          if-no-files-found: error
+          retention-days: 1
