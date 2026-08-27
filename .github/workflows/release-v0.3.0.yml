@@ -199,7 +199,7 @@ jobs:
           const endpoint='https://interop.invalid/mcp';
           const result={root:'https://interop.invalid/.well-known/ard.json',rootSourceKind:'explicit',ardContextSha256:'interop',catalogs:[{url:'https://interop.invalid/.well-known/ard.json',sourceHost:'interop.invalid',sha256:'interop',depth:0,catalog:{entries:[{identifier,displayName:'Pinned official SDK interoperability server',type:'application/mcp-server-card+json',data:{remotes:[{id:'primary',type:'streamable-http',url:endpoint}]}}]}}],findings:[],trust:[]};
           const requester=async(url,body,policy,headers)=>{
-            const response=await handler(new Request(url,{method:'POST',headers:{...headers,'Content-Type':'application/json','Accept':'application/json, text/event-stream'},body:JSON.stringify(body)}));
+            const response=await handler.fetch(new Request(url,{method:'POST',headers:{...headers,'Content-Type':'application/json','Accept':'application/json, text/event-stream'},body:JSON.stringify(body)}));
             return {url,status:response.status,body:await response.text(),contentType:response.headers.get('content-type')??undefined,headers:Object.fromEntries(response.headers.entries())};
           };
           const out=await inspectMcpSurfaces(result,mergePolicy({requireMcpInspection:true,inspectMcpDiscover:true,inspectMcpPrimitives:true}),{requester});
