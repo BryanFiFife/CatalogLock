@@ -130,8 +130,7 @@ jobs:
         run: |
           set -euo pipefail
           cat > /tmp/mcp-interop/interop.mjs <<'EOF'
-          import { McpServer } from '@modelcontextprotocol/server';
-          import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server/streamableHttp';
+          import { McpServer, WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server';
           import * as z from 'zod/v4';
           import { inspectMcpSurfaces, mergePolicy } from '/tmp/cataloglock-candidate/dist/index.js';
 
