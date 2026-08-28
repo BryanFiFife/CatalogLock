@@ -1,0 +1,55 @@
+name: Caledapt Browser v2.2 Windows branding
+on:
+  push:
+    paths:
+      - ".github/workflows/caledapt-browser-v220-brand.yml"
+  workflow_dispatch:
+jobs:
+  brand:
+    runs-on: windows-2025
+    steps:
+      - name: Download and verify Electron 44 x64
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/electron/electron/releases/download/v44.0.0/electron-v44.0.0-win32-x64.zip" -OutFile electron.zip
+          $got=(Get-FileHash .\electron.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($got -ne "e61aa3bcea8152bc0730abd015e47c032d778a0ef10e2a1c78ba3c4ea47942f9") { throw "Electron SHA mismatch: $got" }
+          Expand-Archive .\electron.zip .\electron
+      - name: Download rcedit
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe" -OutFile rcedit.exe
+          if ((Get-Item .\rcedit.exe).Length -lt 1000000) { throw "rcedit download too small" }
+      - name: Apply Caledapt Windows metadata
+        shell: pwsh
+        run: |
+          Move-Item ".\electron\electron.exe" ".\electron\Caledapt Browser.exe"
+          .\rcedit.exe ".\electron\Caledapt Browser.exe" --set-version-string "ProductName" "Caledapt Browser" --set-version-string "FileDescription" "Caledapt Browser" --set-version-string "CompanyName" "Caledapt" --set-version-string "InternalName" "Caledapt Browser" --set-version-string "OriginalFilename" "Caledapt Browser.exe" --set-version-string "LegalCopyright" "Copyright (c) 2026 Caledapt" --set-file-version "2.2.0.0" --set-product-version "2.2.0.0"
+          if ($LASTEXITCODE -ne 0) { throw "rcedit failed" }
+      - name: Verify version resource and PE launchability
+        shell: pwsh
+        run: |
+          $v=(Get-Item ".\electron\Caledapt Browser.exe").VersionInfo
+          $report=[ordered]@{
+            ProductName=$v.ProductName
+            FileDescription=$v.FileDescription
+            CompanyName=$v.CompanyName
+            FileVersion=$v.FileVersion
+            ProductVersion=$v.ProductVersion
+            OriginalFilename=$v.OriginalFilename
+            Size=(Get-Item ".\electron\Caledapt Browser.exe").Length
+            Unsigned=$true
+          }
+          $report | ConvertTo-Json | Set-Content -Encoding UTF8 branding-report.json
+          Get-Content branding-report.json
+          if ($v.ProductName -ne "Caledapt Browser") { throw "ProductName not branded" }
+          if ($v.FileDescription -ne "Caledapt Browser") { throw "FileDescription not branded" }
+          if ($v.CompanyName -ne "Caledapt") { throw "CompanyName not branded" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: caledapt-browser-v220-branded-exe
+          path: |
+            electron/Caledapt Browser.exe
+            branding-report.json
+          retention-days: 1
+          compression-level: 0
