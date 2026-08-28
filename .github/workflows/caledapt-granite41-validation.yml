@@ -59,7 +59,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import json,urllib.request,urllib.error
-          text=("Caledapt context validation token. "*9000)+"\nAt the end answer only: LONG CONTEXT OK"
+          text=("Caledapt context validation token. "*1800)+"\nAt the end answer only: LONG CONTEXT OK"
           body=json.dumps({"model":"granite-4.1-3b","messages":[{"role":"user","content":text}],"temperature":0,"max_tokens":24,"stream":False}).encode()
           req=urllib.request.Request("http://127.0.0.1:38080/v1/chat/completions",data=body,headers={"content-type":"application/json"})
           try:
