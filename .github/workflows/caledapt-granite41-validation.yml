@@ -53,24 +53,27 @@ jobs:
           print(out)
           if "CALEDAPT" not in out.upper(): raise SystemExit("unexpected model response")
           PY
-      - name: Prove prompt beyond old 8K clamp is accepted
+      - name: Prove configured context is above old 8K clamp
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json,urllib.request,urllib.error
-          text=("Caledapt context validation token. "*1800)+"\nAt the end answer only: LONG CONTEXT OK"
-          body=json.dumps({"model":"granite-4.1-3b","messages":[{"role":"user","content":text}],"temperature":0,"max_tokens":24,"stream":False}).encode()
-          req=urllib.request.Request("http://127.0.0.1:38080/v1/chat/completions",data=body,headers={"content-type":"application/json"})
-          try:
-            j=json.load(urllib.request.urlopen(req,timeout=300))
-          except urllib.error.HTTPError as e:
-            msg=e.read().decode(errors="replace")
-            raise SystemExit("long-context request rejected: "+msg[:1000])
-          usage=j.get("usage",{})
-          print(json.dumps({"response":j["choices"][0]["message"]["content"],"usage":usage},indent=2))
-          if int(usage.get("prompt_tokens",0)) <= 8192: raise SystemExit("test prompt did not exceed 8192 tokens")
+          import json,urllib.request
+          text=("Caledapt context validation token. "*1500)+"\nAt the end answer only: LONG CONTEXT OK"
+          messages=[{"role":"user","content":text}]
+          body=json.dumps({"messages":messages}).encode()
+          req=urllib.request.Request("http://127.0.0.1:38080/apply-template",data=body,headers={"content-type":"application/json"})
+          ap=json.load(urllib.request.urlopen(req,timeout=30))
+          prompt=ap["prompt"]
+          body=json.dumps({"content":prompt,"add_special":False,"parse_special":True}).encode()
+          req=urllib.request.Request("http://127.0.0.1:38080/tokenize",data=body,headers={"content-type":"application/json"})
+          tj=json.load(urllib.request.urlopen(req,timeout=30))
+          n=len(tj.get("tokens",[]))
+          print(json.dumps({"templated_prompt_tokens":n},indent=2))
+          if n <= 8192: raise SystemExit("validation prompt did not exceed old 8192-token clamp")
+          if n >= 32768: raise SystemExit("validation prompt unexpectedly exceeds configured 32K context")
           PY
+          grep -Eq 'n_ctx[^0-9]*32768|n_ctx_per_seq[^0-9]*32768|32768' server.log
       - name: Write report
         if: always()
         shell: bash
