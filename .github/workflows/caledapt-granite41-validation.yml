@@ -1,0 +1,86 @@
+name: Caledapt Granite 4.1 release validation
+on:
+  push:
+    paths:
+      - ".github/workflows/caledapt-granite41-validation.yml"
+  workflow_dispatch:
+jobs:
+  granite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Download pinned llama.cpp CPU runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 5 --retry-delay 2 -o llama.tar.gz https://github.com/ggml-org/llama.cpp/releases/download/b10516/llama-b10516-bin-ubuntu-x64.tar.gz
+          echo "f263a91280471b4c33c4999d7c76259c0f3a0a53a0b3e692b2c0b84380137a35  llama.tar.gz" | sha256sum -c -
+          mkdir llama && tar -xzf llama.tar.gz -C llama
+          ./llama/llama-server --version
+      - name: Download official Granite 4.1 3B Q4_K_M
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 6 --retry-delay 4 -o granite.gguf "https://huggingface.co/ibm-granite/granite-4.1-3b-GGUF/resolve/main/granite-4.1-3b-Q4_K_M.gguf?download=true"
+          echo "662b0626cd58f443baea23559b469df6576a81d349649c59413b36a9fb32eb29  granite.gguf" | sha256sum -c -
+      - name: Start local server at 32K context
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./llama/llama-server --host 127.0.0.1 --port 38080 -m granite.gguf --alias granite-4.1-3b -c 32768 -np 1 -t 4 --jinja -fa on -ctk q8_0 -ctv q8_0 --offline --no-webui --log-verbosity 1 >server.log 2>&1 &
+          echo $! > server.pid
+          for i in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:38080/health >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          tail -200 server.log
+          exit 1
+      - name: Normal Granite chat completion
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,urllib.request
+          body=json.dumps({"model":"granite-4.1-3b","messages":[{"role":"user","content":"Reply with exactly: CALEDAPT GRANITE OK"}],"temperature":0,"max_tokens":32,"stream":False}).encode()
+          req=urllib.request.Request("http://127.0.0.1:38080/v1/chat/completions",data=body,headers={"content-type":"application/json"})
+          j=json.load(urllib.request.urlopen(req,timeout=180))
+          out=j["choices"][0]["message"]["content"]
+          print(out)
+          if "CALEDAPT" not in out.upper(): raise SystemExit("unexpected model response")
+          PY
+      - name: Prove prompt beyond old 8K clamp is accepted
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,urllib.request
+          # ~12k simple tokens, deliberately above the previous 8192-token launch clamp.
+          text=("Caledapt context validation token. "*12000)+"\nAt the end answer only: LONG CONTEXT OK"
+          body=json.dumps({"model":"granite-4.1-3b","messages":[{"role":"user","content":text}],"temperature":0,"max_tokens":24,"stream":False}).encode()
+          req=urllib.request.Request("http://127.0.0.1:38080/v1/chat/completions",data=body,headers={"content-type":"application/json"})
+          try:
+            j=json.load(urllib.request.urlopen(req,timeout=300))
+          except urllib.error.HTTPError as e:
+            msg=e.read().decode(errors="replace")
+            raise SystemExit("long-context request rejected: "+msg[:1000])
+          out=j["choices"][0]["message"]["content"]
+          usage=j.get("usage",{})
+          print(json.dumps({"response":out,"usage":usage},indent=2))
+          if int(usage.get("prompt_tokens",0)) <= 8192: raise SystemExit("test prompt did not exceed 8192 tokens")
+          PY
+      - name: Write report
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,os
+          print(json.dumps({"model":"IBM Granite 4.1 3B Q4_K_M","sha256":"662b0626cd58f443baea23559b469df6576a81d349649c59413b36a9fb32eb29","runtime":"llama.cpp b10516","context":32768,"status":"completed"},indent=2),file=open("granite-validation.json","w"))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: caledapt-granite41-validation
+          path: |
+            granite-validation.json
+            server.log
+          retention-days: 1
