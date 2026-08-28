@@ -15,41 +15,37 @@ jobs:
           $got=(Get-FileHash .\electron.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($got -ne "e61aa3bcea8152bc0730abd015e47c032d778a0ef10e2a1c78ba3c4ea47942f9") { throw "Electron SHA mismatch: $got" }
           Expand-Archive .\electron.zip .\electron
-      - name: Download rcedit
+      - name: Create Caledapt icon and download rcedit
         shell: pwsh
         run: |
+          [IO.File]::WriteAllBytes("icon.png",[Convert]::FromBase64String("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"))
+          $img=[IO.File]::ReadAllBytes("icon.png")
+          $ms=New-Object IO.MemoryStream
+          $bw=New-Object IO.BinaryWriter($ms)
+          $bw.Write([UInt16]0); $bw.Write([UInt16]1); $bw.Write([UInt16]1)
+          $bw.Write([Byte]0); $bw.Write([Byte]0); $bw.Write([Byte]0); $bw.Write([Byte]0)
+          $bw.Write([UInt16]1); $bw.Write([UInt16]32); $bw.Write([UInt32]$img.Length); $bw.Write([UInt32]22)
+          $bw.Write($img); $bw.Flush(); [IO.File]::WriteAllBytes("Caledapt.ico",$ms.ToArray())
           Invoke-WebRequest -Uri "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe" -OutFile rcedit.exe
-          if ((Get-Item .\rcedit.exe).Length -lt 1000000) { throw "rcedit download too small" }
-      - name: Apply Caledapt Windows metadata
+      - name: Apply Caledapt Windows metadata and icon
         shell: pwsh
         run: |
           Move-Item ".\electron\electron.exe" ".\electron\Caledapt Browser.exe"
-          .\rcedit.exe ".\electron\Caledapt Browser.exe" --set-version-string "ProductName" "Caledapt Browser" --set-version-string "FileDescription" "Caledapt Browser" --set-version-string "CompanyName" "Caledapt" --set-version-string "InternalName" "Caledapt Browser" --set-version-string "OriginalFilename" "Caledapt Browser.exe" --set-version-string "LegalCopyright" "Copyright (c) 2026 Caledapt" --set-file-version "2.2.0.0" --set-product-version "2.2.0.0"
+          .\rcedit.exe ".\electron\Caledapt Browser.exe" --set-icon ".\Caledapt.ico" --set-version-string "ProductName" "Caledapt Browser" --set-version-string "FileDescription" "Caledapt Browser" --set-version-string "CompanyName" "Caledapt" --set-version-string "InternalName" "Caledapt Browser" --set-version-string "OriginalFilename" "Caledapt Browser.exe" --set-version-string "LegalCopyright" "Copyright (c) 2026 Caledapt" --set-file-version "2.2.0.0" --set-product-version "2.2.0.0"
           if ($LASTEXITCODE -ne 0) { throw "rcedit failed" }
-      - name: Verify version resource and PE launchability
+      - name: Verify version resource
         shell: pwsh
         run: |
           $v=(Get-Item ".\electron\Caledapt Browser.exe").VersionInfo
-          $report=[ordered]@{
-            ProductName=$v.ProductName
-            FileDescription=$v.FileDescription
-            CompanyName=$v.CompanyName
-            FileVersion=$v.FileVersion
-            ProductVersion=$v.ProductVersion
-            OriginalFilename=$v.OriginalFilename
-            Size=(Get-Item ".\electron\Caledapt Browser.exe").Length
-            Unsigned=$true
-          }
+          $report=[ordered]@{ProductName=$v.ProductName;FileDescription=$v.FileDescription;CompanyName=$v.CompanyName;FileVersion=$v.FileVersion;ProductVersion=$v.ProductVersion;OriginalFilename=$v.OriginalFilename;Size=(Get-Item ".\electron\Caledapt Browser.exe").Length;Unsigned=$true;Icon="Caledapt"}
           $report | ConvertTo-Json | Set-Content -Encoding UTF8 branding-report.json
-          Get-Content branding-report.json
-          if ($v.ProductName -ne "Caledapt Browser") { throw "ProductName not branded" }
-          if ($v.FileDescription -ne "Caledapt Browser") { throw "FileDescription not branded" }
-          if ($v.CompanyName -ne "Caledapt") { throw "CompanyName not branded" }
+          if ($v.ProductName -ne "Caledapt Browser" -or $v.CompanyName -ne "Caledapt") { throw "Branding validation failed" }
       - uses: actions/upload-artifact@v4
         with:
           name: caledapt-browser-v220-branded-exe
           path: |
             electron/Caledapt Browser.exe
             branding-report.json
+            Caledapt.ico
           retention-days: 1
           compression-level: 0
